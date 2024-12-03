@@ -148,5 +148,13 @@ pub const Lexer = struct {
         }
     }
 
+    fn identifier(self: *Lexer) !void { 
+        while (self.isAlphaNumeric(self.peek())) : (self.advance()) {}
+
+        const text = self.source[self.start..self.current];
+        const token_type = self.getKeywordType(text);
+        try self.addToken(token_type);
+    }
+
     
 };
