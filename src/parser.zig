@@ -125,4 +125,13 @@ pub const Parser = struct {
             },
         };
     }
+
+    fn statement(self: *Parser) !Stmt {
+        if (self.match(.RealTalk)) return try self.blockStatement();
+        if (self.match(.NoShot)) return try self.ifStatement();
+        if (self.match(.Deadass)) return try self.whileStatement();
+        if (self.match(.Yeet)) return try self.returnStatement();
+
+        return try self.expressionStatement();
+    }
 };
