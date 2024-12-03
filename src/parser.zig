@@ -9,6 +9,30 @@ pub const Parser = struct {
     allocator: std.mem.Allocator,
     had_error: bool,
 
+    // Move enums inside the Parser struct
+    pub const FunctionType = enum {
+        Sigma, // Regular function
+        Bussin, // Main/entry point function
+        Hitting, // Methods/class functions
+        Tweaking, // Modifier functions
+        Vibing, // Async functions
+        Mewing, // Generator functions
+    };
+
+    pub const ScopeType = enum {
+        Lowkey, // private scope
+        Highkey, // public scope
+    };
+
+    pub const ValueQualifier = enum {
+        Sus, // nullable
+        Clean, // validated
+        Peak, // optimized
+        Mid, // default
+        Based, // constant
+        Devious, // unsafe
+    };
+
     // ast node types
     pub const ExprType = enum {
         Binary,
@@ -20,6 +44,8 @@ pub const Parser = struct {
         Call,
         Array,
         Index,
+        FanumSlice,
+        Griddy,
     };
 
     pub const StmtType = enum {
@@ -32,6 +58,7 @@ pub const Parser = struct {
         Function,
         Try,
         Catch,
+        Scope,
     };
 
     pub const Expr = union(ExprType) {
@@ -68,6 +95,16 @@ pub const Parser = struct {
             array: *Expr,
             index: *Expr,
         },
+        FanumSlice: struct {
+            array: *Expr,
+            start: *Expr,
+            end: *Expr,
+        },
+        Griddy: struct {
+            iterator: Token,
+            iterable: *Expr,
+            body: *Stmt,
+        },
     };
 
     pub const Stmt = union(StmtType) {
@@ -76,6 +113,7 @@ pub const Parser = struct {
         },
         Declaration: struct {
             name: Token,
+            qualifier: ValueQualifier,
             initializer: ?*Expr,
         },
         Block: struct {
@@ -95,6 +133,7 @@ pub const Parser = struct {
             value: ?*Expr,
         },
         Function: struct {
+            type: FunctionType,
             name: Token,
             params: std.ArrayList(Token),
             body: *Stmt,
@@ -106,6 +145,10 @@ pub const Parser = struct {
         Catch: struct {
             error_var: Token,
             body: *Stmt,
+        },
+        Scope: struct {
+            type: ScopeType,
+            declarations: std.ArrayList(Stmt),
         },
     };
 
@@ -131,10 +174,19 @@ pub const Parser = struct {
     }
 
     fn declaration(self: *Parser) !?Stmt {
-        if (self.match(.Sigma)) {
+        if (self.match(.Sigma) or self.match(.Bussin) or
+            self.match(.Hitting) or self.match(.Tweaking) or
+            self.match(.Vibing) or self.match(.Mewing))
+        {
             return try self.functionDeclaration();
         }
-        if (self.match(.Sus) or self.match(.Clean) or self.match(.Peak)) {
+        if (self.match(.Lowkey) or self.match(.Highkey)) {
+            return try self.scopeDeclaration();
+        }
+        if (self.match(.Sus) or self.match(.Clean) or
+            self.match(.Peak) or self.match(.Based) or
+            self.match(.Devious))
+        {
             return try self.varDeclaration();
         }
 
@@ -142,7 +194,18 @@ pub const Parser = struct {
     }
 
     fn varDeclaration(self: *Parser) !Stmt {
-        const name = self.previous();
+        var qualifier = ValueQualifier.Mid;
+
+        switch (self.previous().type) {
+            .Sus => qualifier = .Sus,
+            .Clean => qualifier = .Clean,
+            .Peak => qualifier = .Peak,
+            .Based => qualifier = .Based,
+            .Devious => qualifier = .Devious,
+            else => {},
+        }
+
+        const name = try self.consume(.Identifier, "Expected variable name");
 
         var initializer: ?*Expr = null;
         if (self.match(.Equal)) {
@@ -151,12 +214,11 @@ pub const Parser = struct {
 
         _ = try self.consume(.Semicolon, "Expected ';' after variable declaration");
 
-        return Stmt{
-            .Declaration = .{
-                .name = name,
-                .initializer = initializer,
-            },
-        };
+        return Stmt{ .Declaration = .{
+            .name = name,
+            .qualifier = qualifier,
+            .initializer = initializer,
+        } };
     }
 
     fn statement(self: *Parser) !Stmt {
@@ -165,6 +227,7 @@ pub const Parser = struct {
         if (self.match(.Deadass)) return try self.whileStatement();
         if (self.match(.Yeet)) return try self.returnStatement();
         if (self.match(.Crashout)) return try self.tryStatement();
+        if (self.match(.Griddy)) return try self.griddyLoop();
 
         return try self.expressionStatement();
     }
@@ -256,7 +319,7 @@ pub const Parser = struct {
             if (self.previous().type == .Semicolon) return;
 
             switch (self.peek().type) {
-                .RealTalk, .NoShot, .Deadass, .Yeet, .Sus, .Clean, .Peak => return,
+                .Sigma, .Bussin, .Hitting, .Tweaking, .Vibing, .Mewing, .Lowkey, .Highkey, .Griddy, .FanumTax, .Sus, .Clean, .Peak, .Based, .Devious, .RealTalk, .NoShot, .Deadass, .Yeet, .Crashout => return,
                 else => _ = self.advance(),
             }
         }
@@ -369,13 +432,11 @@ pub const Parser = struct {
 
         if (self.match(.Identifier)) {
             node.* = .{ .Variable = .{ .name = self.previous() } };
-            return node;
-        }
 
-        if (self.match(.LeftParen)) {
-            const expr = try self.expression();
-            _ = try self.consume(.RightParen, "Expected ')' after expression");
-            node.* = .{ .Grouping = .{ .expression = expr } };
+            // Check for array operations
+            if (self.match(.Dot) and self.match(.FanumTax)) {
+                return try self.fanumSlice(node);
+            }
             return node;
         }
 
@@ -392,11 +453,70 @@ pub const Parser = struct {
             return node;
         }
 
+        if (self.match(.LeftParen)) {
+            const expr = try self.expression();
+            _ = try self.consume(.RightParen, "Expected ')' after expression");
+            node.* = .{ .Grouping = .{ .expression = expr } };
+            return node;
+        }
+
         try self.reportError(self.peek(), "Expected expression");
         return error.ParseError;
     }
 
+    fn fanumSlice(self: *Parser, array: *Expr) !*Expr {
+        _ = try self.consume(.LeftBracket, "Expected '[' after fanumtax");
+
+        const start = try self.expression();
+        _ = try self.consume(.Colon, "Expected ':' in slice");
+        const end = try self.expression();
+
+        _ = try self.consume(.RightBracket, "Expected ']' after slice");
+
+        const node = try self.allocator.create(Expr);
+        node.* = .{ .FanumSlice = .{
+            .array = array,
+            .start = start,
+            .end = end,
+        } };
+        return node;
+    }
+
+    fn griddyLoop(self: *Parser) !Stmt {
+        _ = try self.consume(.LeftParen, "Expected '(' after griddy");
+
+        // Handle optional qualifier for iterator variable
+        var qualifier = ValueQualifier.Mid;
+        if (self.match(.Sus)) qualifier = .Sus else if (self.match(.Clean)) qualifier = .Clean else if (self.match(.Peak)) qualifier = .Peak else if (self.match(.Based)) qualifier = .Based else if (self.match(.Devious)) qualifier = .Devious;
+
+        const iterator = try self.consume(.Identifier, "Expected iterator name");
+        _ = try self.consume(.In, "Expected 'in' after iterator");
+        const iterable = try self.expression();
+        _ = try self.consume(.RightParen, "Expected ')' after griddy condition");
+
+        const body = try self.statement();
+
+        const node = try self.allocator.create(Stmt);
+        node.* = body;
+
+        return Stmt{ .Griddy = .{
+            .iterator = iterator,
+            .iterable = iterable,
+            .body = node,
+        } };
+    }
+
     fn functionDeclaration(self: *Parser) !Stmt {
+        var fn_type: FunctionType = .Sigma;
+        switch (self.previous().type) {
+            .Bussin => fn_type = .Bussin,
+            .Hitting => fn_type = .Hitting,
+            .Tweaking => fn_type = .Tweaking,
+            .Vibing => fn_type = .Vibing,
+            .Mewing => fn_type = .Mewing,
+            else => {},
+        }
+
         const name = try self.consume(.Identifier, "Expected function name");
         _ = try self.consume(.LeftParen, "Expected '(' after function name");
 
@@ -421,6 +541,7 @@ pub const Parser = struct {
         body_node.* = body;
 
         return Stmt{ .Function = .{
+            .type = fn_type,
             .name = name,
             .params = params,
             .body = body_node,
@@ -449,6 +570,29 @@ pub const Parser = struct {
         return Stmt{ .Try = .{
             .body = try_stmt,
             .catch_clause = catch_stmt,
+        } };
+    }
+
+    fn scopeDeclaration(self: *Parser) !Stmt {
+        const scope_type: ScopeType = if (self.previous().type == .Lowkey)
+            .Lowkey
+        else
+            .Highkey;
+
+        _ = try self.consume(.RealTalk, "Expected 'real talk' after scope declaration");
+
+        var declarations = std.ArrayList(Stmt).init(self.allocator);
+        while (!self.check(.Respectfully) and !self.isAtEnd()) {
+            if (try self.declaration()) |stmt| {
+                try declarations.append(stmt);
+            }
+        }
+
+        _ = try self.consume(.Respectfully, "Expected 'respectfully' after scope block");
+
+        return Stmt{ .Scope = .{
+            .type = scope_type,
+            .declarations = declarations,
         } };
     }
 };
