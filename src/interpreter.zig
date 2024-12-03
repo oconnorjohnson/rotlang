@@ -49,3 +49,21 @@ pub const Value = union(enum) {
         }
     }
 };
+
+pub const Environment = struct {
+    values: std.StringHashMap(Value),
+    enclosing: ?*Environment,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, enclosing: ?*Environment) Environment {
+        return .{
+            .values = std.StringHashMap(Value).init(allocator),
+            .enclosing = enclosing,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *Environment) void {
+        self.values.deinit();
+    }
+};
