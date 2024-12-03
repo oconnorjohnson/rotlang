@@ -134,4 +134,18 @@ pub const Parser = struct {
 
         return try self.expressionStatement();
     }
+
+    fn blockStatement(self: *Parser) !Stmt {
+        var statements = std.ArrayList(Stmt).init(self.allocator);
+
+        while (!self.check(.Respectfully) and !self.isAtEnd()) {
+            if (try self.declaration()) |stmt| {
+                try statements.append(stmt);
+            }
+        }
+
+        _ = try self.consume(.Respectfully, "Expected 'respectfully' after block");
+
+        return Stmt{ .Block = .{ .statements = statements } };
+    }
 };
