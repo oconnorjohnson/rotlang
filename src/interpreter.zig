@@ -66,4 +66,34 @@ pub const Environment = struct {
     pub fn deinit(self: *Environment) void {
         self.values.deinit();
     }
+
+    pub fn define(self: *Environment, name: []const u8, value: Value) !void {
+        try self.values.put(name, value);
+    }
+
+    pub fn get(self: *Environment, name: Token) !Value {
+        if (self.values.get(name.lexeme)) |value| {
+            return value;
+        }
+
+        if (self.enclosing) |enclosing| {
+            return enclosing.get(name);
+        }
+
+        return RuntimeError.UndefinedVariable;
+    }
+
+    pub fn assign(self: *Environment, name: Token, value: Value) !void {
+        if (self.values.contains(name.lexeme)) {
+            try self.values.put(name.lexeme, value);
+            return;
+        }
+
+        if (self.enclosing) |enclosing| {
+            try enclosing.assign(name, value);
+            return;
+        }
+
+        return RuntimeError.UndefinedVariable;
+    }
 };
