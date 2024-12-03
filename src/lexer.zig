@@ -181,4 +181,17 @@ pub const Lexer = struct {
 
         return keywords.get(text) orelse .Identifier;
     }
+
+    fn number(self: *Lexer) !void { 
+        while (self.isdigit(self.peek())) : (self.advance()) {}
+
+        if (self.peek() == '.' and self.isDigit(self.peekNext())) { 
+            self.advance();
+            while (self.isDigit(self.peek())) : (self.advance()) {}
+        }
+
+        try self.addToken(.Number);
+    }
+
+    
 };
