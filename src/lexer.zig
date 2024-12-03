@@ -129,11 +129,16 @@ pub const Lexer = struct {
             '+' => try self.addToken(.Plus),
             ';' => try self.addToken(.SemiColon),
             '*' => try self.addToken(.Star),
-            '/' => try self.addToken(.Slash),
+            '/' => {
+                if (self.match('/')) {
+                    while (self.peek() != '\n' and !self.isAtEnd()) : (self.advance()) {}
+                } else {
+                    try self.addToken(.Slash);
+                }
+            },
             '=' => try self.addToken(.Equal),
             '"' => try self.string(),
 
-            // whitespace
             ' ', '\r', '\t' => {},
             '\n' => self.line += 1,
 
@@ -143,6 +148,7 @@ pub const Lexer = struct {
                 } else if (self.isAlpha(c)) {
                     try self.identifier();
                 } else {
+                    std.debug.print("Error at line {d}: Unexpected character '{c}'\n", .{ self.line, c });
                     try self.addToken(.Error);
                 }
             },
@@ -218,24 +224,53 @@ pub const Lexer = struct {
 
         if (self.peek() == '.' and self.isDigit(self.peekNext())) {
             self.advance();
+
             while (self.isDigit(self.peek())) : (self.advance()) {}
+
+            if (self.peek() == 'e' or self.peek() == 'E') {
+                const next = self.peekNext();
+                if (self.isDigit(next) or next == '+' or next == '-') {
+                    self.advance(); // consume 'e'
+                    if (next == '+' or next == '-') self.advance();
+                    while (self.isDigit(self.peek())) : (self.advance()) {}
+                }
+            }
         }
 
         try self.addToken(.Number);
     }
 
     fn string(self: *Lexer) !void {
-        while (self.peek() != '"' and !self.isAtEnd()) : (self.advance()) {
-            if (self.peek() == '\n') self.line += 1;
+        var had_escape = false;
+        while (!self.isAtEnd()) {
+            const c = self.peek();
+            switch (c) {
+                '"' => {
+                    if (!had_escape) {
+                        self.advance();
+                        try self.addToken(.String);
+                        return;
+                    }
+                    had_escape = false;
+                },
+                '\\' => {
+                    had_escape = !had_escape;
+                    self.advance();
+                },
+                '\n' => {
+                    self.line += 1;
+                    had_escape = false;
+                    self.advance();
+                },
+                else => {
+                    had_escape = false;
+                    self.advance();
+                },
+            }
         }
 
-        if (self.isAtEnd()) {
-            try self.addToken(.Error);
-            return;
-        }
-
-        self.advance();
-        try self.addToken(.String);
+        std.debug.print("Error at line {d}: Unterminated string\n", .{self.line});
+        try self.addToken(.Error);
     }
 
     fn addToken(self: *Lexer, token_type: TokenType) !void {
@@ -243,7 +278,6 @@ pub const Lexer = struct {
         try self.tokens.append(Token.init(token_type, lexeme, self.line));
     }
 
-    // helper methods
     fn advance(self: *Lexer) u8 {
         self.current += 1;
         return self.source[self.current - 1];
@@ -275,5 +309,13 @@ pub const Lexer = struct {
 
     fn isAlphaNumeric(c: u8) bool {
         return isAlpha(c) or isDigit(c);
+    }
+
+    fn match(self: *Lexer, expected: u8) bool {
+        if (self.isAtEnd()) return false;
+        if (self.source[self.current] != expected) return false;
+
+        self.current += 1;
+        return true;
     }
 };
