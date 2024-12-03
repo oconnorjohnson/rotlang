@@ -182,9 +182,9 @@ pub const Parser = struct {
         return false;
     }
 
-    fn check(self: *Parser, type: TokenType) bool {
+    fn check(self: *Parser, token_type: TokenType) bool {
         if (self.isAtEnd()) return false;
-        return self.peek().type == type;
+        return self.peek().type == token_type;
     }
 
     fn advance(self: *Parser) Token {
@@ -204,8 +204,8 @@ pub const Parser = struct {
         return self.tokens[self.current - 1];
     }
 
-    fn consume(self: *Parser, type: TokenType, message: []const u8) !Token {
-        if (self.check(type)) return self.advance();
+    fn consume(self: *Parser, token_type: TokenType, message: []const u8) !Token {
+        if (self.check(token_type)) return self.advance();
         try self.reportError(self.peek(), message);
         return error.ParseError;
     }
@@ -234,7 +234,7 @@ pub const Parser = struct {
     }
 
     fn assignment(self: *Parser) !*Expr {
-        var expr = try self.equality();
+        const expr = try self.equality();
 
         if (self.match(.Equal)) {
             const equals = self.previous();
