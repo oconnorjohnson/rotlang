@@ -39,6 +39,36 @@ pub const ErrorValue = struct {
     }
 };
 
+pub const Qualifier = enum {
+    Clean,
+    Sus,
+    Peak,
+    None, // Default qualifier
+};
+
+pub const QualifiedValue = struct {
+    value: Value,
+    qualifier: Qualifier,
+
+    pub fn init(value: Value, qualifier: Qualifier) QualifiedValue {
+        return .{
+            .value = value,
+            .qualifier = qualifier,
+        };
+    }
+
+    pub fn deinit(self: *QualifiedValue) void {
+        self.value.deinit();
+    }
+
+    pub fn clone(self: QualifiedValue, allocator: std.mem.Allocator) !QualifiedValue {
+        return QualifiedValue{
+            .value = try self.value.clone(allocator),
+            .qualifier = self.qualifier,
+        };
+    }
+};
+
 pub const Value = union(enum) {
     number: f64,
     string: []const u8,
@@ -92,6 +122,32 @@ pub const Value = union(enum) {
             else => self,
         };
     }
+
+    pub fn validateQualifier(self: Value, qualifier: Qualifier) !void {
+        switch (self) {
+            .number => {
+                if (qualifier == .Peak) return RuntimeError.InvalidQualifier;
+            },
+            .string => {
+                if (qualifier == .Sus) return RuntimeError.InvalidQualifier;
+            },
+            .array => {
+                // Arrays can have any qualifier
+            },
+            else => {
+                if (qualifier != .None) return RuntimeError.InvalidQualifier;
+            },
+        }
+    }
+
+    pub fn getDefaultQualifier(self: Value) Qualifier {
+        return switch (self) {
+            .number => .Clean,
+            .string => .Clean,
+            .array => .None,
+            else => .None,
+        };
+    }
 };
 
 fn cloneArrayList(original: std.ArrayList(Value), allocator: std.mem.Allocator) !std.ArrayList(Value) {
@@ -106,13 +162,13 @@ fn cloneArrayList(original: std.ArrayList(Value), allocator: std.mem.Allocator) 
 }
 
 pub const Environment = struct {
-    values: std.StringHashMap(Value),
+    values: std.StringHashMap(QualifiedValue),
     enclosing: ?*Environment,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, enclosing: ?*Environment) Environment {
         return .{
-            .values = std.StringHashMap(Value).init(allocator),
+            .values = std.StringHashMap(QualifiedValue).init(allocator),
             .enclosing = enclosing,
             .allocator = allocator,
         };
@@ -127,7 +183,10 @@ pub const Environment = struct {
         self.values.deinit();
     }
 
-    pub fn define(self: *Environment, name: []const u8, value: Value) !void {
+    pub fn define(self: *Environment, name: []const u8, value: QualifiedValue) !void {
+        // Validate qualifier
+        try value.value.validateQualifier(value.qualifier);
+
         // If we're redefining a variable, clean up the old value first
         if (self.values.getPtr(name)) |old_value| {
             old_value.deinit();
@@ -338,14 +397,15 @@ pub const Interpreter = struct {
         }
     }
 
-    fn evaluateExpression(self: *Interpreter, expr: *const Expr) !Value {
+    fn evaluateExpression(self: *Interpreter, expr: *const Expr) !QualifiedValue {
         switch (expr.*) {
             .Literal => |lit| {
-                return switch (lit.value.type) {
+                const value = switch (lit.value.type) {
                     .Number => Value{ .number = try std.fmt.parseFloat(f64, lit.value.lexeme) },
                     .String => Value{ .string = lit.value.lexeme },
                     else => Value{ .null = {} },
                 };
+                return QualifiedValue.init(value, value.getDefaultQualifier());
             },
             .Binary => |bin| {
                 const left = try self.evaluateExpression(bin.left);
@@ -440,7 +500,19 @@ pub const Interpreter = struct {
         }
     }
 
-    fn evaluateBinaryOp(self: *Interpreter, left: Value, operator: Token, right: Value) !Value {
+    fn evaluateBinaryOp(self: *Interpreter, left: QualifiedValue, operator: Token, right: QualifiedValue) !QualifiedValue {
+        const result_qualifier = combineQualifiers(left.qualifier, right.qualifier);
+        const result_value = try self.evaluateBinaryOpValues(left.value, operator, right.value);
+        return QualifiedValue.init(result_value, result_qualifier);
+    }
+
+    fn combineQualifiers(left: Qualifier, right: Qualifier) Qualifier {
+        if (left == .Sus or right == .Sus) return .Sus;
+        if (left == .Peak or right == .Peak) return .Peak;
+        return .Clean;
+    }
+
+    fn evaluateBinaryOpValues(self: *Interpreter, left: Value, operator: Token, right: Value) !Value {
         _ = self;
         switch (operator.type) {
             .Plus => {
