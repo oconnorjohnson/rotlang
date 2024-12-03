@@ -99,6 +99,7 @@ pub const Value = union(enum) {
     string: []const u8,
     boolean: bool,
     array: std.ArrayList(Value),
+    iterator: Iterator,
     null: void,
     function: Function,
     error_value: ErrorValue,
@@ -445,6 +446,39 @@ pub const Interpreter = struct {
                 return RuntimeError.InvalidErrorValue;
             },
 
+            .Griddy => |griddy| {
+                // Create a new scope for the loop
+                var loop_env = Environment.init(self.allocator, self.environment);
+                defer loop_env.deinit();
+
+                const previous = self.environment;
+                self.environment = &loop_env;
+                defer self.environment = previous;
+
+                // Evaluate the iterator expression
+                const iterator_value = try self.evaluateExpression(griddy.iterator);
+                var iterator = try Iterator.init(self.allocator, iterator_value.value);
+                defer iterator.deinit();
+
+                // Execute the loop
+                while (true) {
+                    const next_value = try iterator.next() orelse break;
+
+                    // Define the loop variable in the current scope
+                    const loop_var = QualifiedValue.init(next_value, .Clean);
+                    try self.environment.define(griddy.variable.lexeme, loop_var);
+
+                    // Execute the loop body
+                    self.executeStatement(griddy.body) catch |err| {
+                        switch (err) {
+                            RuntimeError.Break => break,
+                            RuntimeError.Continue => continue,
+                            else => return err,
+                        }
+                    };
+                }
+            },
+
             else => @panic("Unimplemented statement type"),
         }
     }
@@ -673,6 +707,12 @@ pub const Interpreter = struct {
         }
         return value;
     }
+
+    // Add helper method for creating iterators
+    fn createIterator(self: *Interpreter, value: Value) !Value {
+        const iterator = try Iterator.init(self.allocator, value);
+        return Value{ .iterator = iterator };
+    }
 };
 
 pub const Function = struct {
@@ -681,4 +721,98 @@ pub const Function = struct {
     params: std.ArrayList(Token),
     body: *Stmt,
     closure: *Environment,
+};
+
+pub const IteratorType = enum {
+    Array,
+    Range,
+    String,
+};
+
+pub const Iterator = struct {
+    type: IteratorType,
+    current: usize,
+    // Using a union to store different iterator states
+    data: union(IteratorType) {
+        Array: struct {
+            items: *std.ArrayList(Value),
+        },
+        Range: struct {
+            start: f64,
+            end: f64,
+            step: f64,
+        },
+        String: struct {
+            text: []const u8,
+        },
+    },
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, value: Value) !Iterator {
+        return switch (value) {
+            .array => |arr| Iterator{
+                .type = .Array,
+                .current = 0,
+                .data = .{ .Array = .{ .items = &arr } },
+                .allocator = allocator,
+            },
+            .number => |n| Iterator{
+                .type = .Range,
+                .current = 0,
+                .data = .{ .Range = .{
+                    .start = 0,
+                    .end = n,
+                    .step = 1,
+                } },
+                .allocator = allocator,
+            },
+            .string => |s| Iterator{
+                .type = .String,
+                .current = 0,
+                .data = .{ .String = .{ .text = s } },
+                .allocator = allocator,
+            },
+            else => RuntimeError.TypeError,
+        };
+    }
+
+    pub fn next(self: *Iterator) !?Value {
+        switch (self.type) {
+            .Array => {
+                if (self.current >= self.data.Array.items.items.len) return null;
+                const value = try self.data.Array.items.items[self.current].clone(self.allocator);
+                self.current += 1;
+                return value;
+            },
+            .Range => {
+                const current_value = self.data.Range.start + @as(f64, @floatFromInt(self.current)) * self.data.Range.step;
+                if (current_value >= self.data.Range.end) return null;
+                self.current += 1;
+                return Value{ .number = current_value };
+            },
+            .String => {
+                if (self.current >= self.data.String.text.len) return null;
+                const char = self.data.String.text[self.current];
+                self.current += 1;
+                // Create a single-character string
+                const char_str = try self.allocator.dupe(u8, &[_]u8{char});
+                return Value{ .string = char_str };
+            },
+        }
+    }
+
+    pub fn deinit(self: *Iterator) void {
+        // Clean up any allocated resources
+        switch (self.type) {
+            .String => {
+                // No cleanup needed for string iterators
+            },
+            .Array => {
+                // Array itself is cleaned up by the Value deinit
+            },
+            .Range => {
+                // No cleanup needed for range iterators
+            },
+        }
+    }
 };
