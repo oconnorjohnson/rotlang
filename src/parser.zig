@@ -433,9 +433,29 @@ pub const Parser = struct {
         if (self.match(.Identifier)) {
             node.* = .{ .Variable = .{ .name = self.previous() } };
 
-            // Check for array operations
-            if (self.match(.Dot) and self.match(.FanumTax)) {
-                return try self.fanumSlice(node);
+            // Handle method calls and array operations
+            while (true) {
+                if (self.match(.LeftParen)) {
+                    node = try self.finishCall(node);
+                } else if (self.match(.LeftBracket)) {
+                    if (self.check(.Colon)) {
+                        _ = self.advance(); // consume the colon
+                        node = try self.fanumSlice(node);
+                    } else {
+                        node = try self.arrayIndex(node);
+                    }
+                } else if (self.match(.Dot)) {
+                    if (self.match(.FanumTax)) {
+                        node = try self.fanumSlice(node);
+                    } else {
+                        const name = try self.consume(.Identifier, "Expected property name after '.'");
+                        const method_node = try self.allocator.create(Expr);
+                        method_node.* = .{ .Variable = .{ .name = name } };
+                        node = try self.finishCall(method_node);
+                    }
+                } else {
+                    break;
+                }
             }
             return node;
         }
@@ -594,5 +614,84 @@ pub const Parser = struct {
             .type = scope_type,
             .declarations = declarations,
         } };
+    }
+
+    fn finishCall(self: *Parser, callee: *Expr) !*Expr {
+        var arguments = std.ArrayList(*Expr).init(self.allocator);
+
+        if (!self.check(.RightParen)) {
+            while (true) {
+                try arguments.append(try self.expression());
+                if (!self.match(.Comma)) break;
+            }
+        }
+
+        _ = try self.consume(.RightParen, "Expected ')' after arguments");
+
+        const node = try self.allocator.create(Expr);
+        node.* = .{ .Call = .{
+            .callee = callee,
+            .arguments = arguments,
+        } };
+        return node;
+    }
+
+    fn arrayIndex(self: *Parser, array: *Expr) !*Expr {
+        const index = try self.expression();
+        _ = try self.consume(.RightBracket, "Expected ']' after index");
+
+        const node = try self.allocator.create(Expr);
+        node.* = .{ .Index = .{
+            .array = array,
+            .index = index,
+        } };
+        return node;
+    }
+
+    fn returnStatement(self: *Parser) !Stmt {
+        const keyword = self.previous();
+        var value: ?*Expr = null;
+
+        if (!self.check(.Semicolon)) {
+            value = try self.expression();
+        }
+
+        _ = try self.consume(.Semicolon, "Expected ';' after return value");
+
+        return Stmt{ .Return = .{
+            .keyword = keyword,
+            .value = value,
+        } };
+    }
+
+    fn whileStatement(self: *Parser) !Stmt {
+        _ = try self.consume(.LeftParen, "Expected '(' after 'deadass'");
+        const condition = try self.expression();
+        _ = try self.consume(.RightParen, "Expected ')' after condition");
+
+        const body = try self.statement();
+        const body_node = try self.allocator.create(Stmt);
+        body_node.* = body;
+
+        return Stmt{ .While = .{
+            .condition = condition,
+            .body = body_node,
+        } };
+    }
+
+    fn expressionStatement(self: *Parser) !Stmt {
+        const expr = try self.expression();
+        _ = try self.consume(.Semicolon, "Expected ';' after expression");
+
+        return Stmt{ .Expression = .{
+            .expr = expr,
+        } };
+    }
+
+    // Add memory cleanup method
+    pub fn deinit(self: *Parser) void {
+        // Cleanup will be handled by the Arena allocator
+        // But we should provide this method for explicit cleanup if needed
+        _ = self;
     }
 };
