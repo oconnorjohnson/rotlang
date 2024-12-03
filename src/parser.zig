@@ -17,6 +17,9 @@ pub const Parser = struct {
         Unary,
         Variable,
         Assignment,
+        Call,
+        Array,
+        Index,
     };
 
     pub const StmtType = enum {
@@ -26,6 +29,9 @@ pub const Parser = struct {
         If,
         While,
         Return,
+        Function,
+        Try,
+        Catch,
     };
 
     pub const Expr = union(ExprType) {
@@ -50,6 +56,17 @@ pub const Parser = struct {
         Assignment: struct {
             name: Token,
             value: *Expr,
+        },
+        Call: struct {
+            callee: *Expr,
+            arguments: std.ArrayList(*Expr),
+        },
+        Array: struct {
+            elements: std.ArrayList(*Expr),
+        },
+        Index: struct {
+            array: *Expr,
+            index: *Expr,
         },
     };
 
@@ -77,6 +94,19 @@ pub const Parser = struct {
             keyword: Token,
             value: ?*Expr,
         },
+        Function: struct {
+            name: Token,
+            params: std.ArrayList(Token),
+            body: *Stmt,
+        },
+        Try: struct {
+            body: *Stmt,
+            catch_clause: *Stmt,
+        },
+        Catch: struct {
+            error_var: Token,
+            body: *Stmt,
+        },
     };
 
     pub fn init(allocator: std.mem.Allocator, tokens: []const Token) Parser {
@@ -101,6 +131,9 @@ pub const Parser = struct {
     }
 
     fn declaration(self: *Parser) !?Stmt {
+        if (self.match(.Sigma)) {
+            return try self.functionDeclaration();
+        }
         if (self.match(.Sus) or self.match(.Clean) or self.match(.Peak)) {
             return try self.varDeclaration();
         }
@@ -119,7 +152,7 @@ pub const Parser = struct {
         _ = try self.consume(.Semicolon, "Expected ';' after variable declaration");
 
         return Stmt{
-            .DEeclaration = .{
+            .Declaration = .{
                 .name = name,
                 .initializer = initializer,
             },
@@ -131,6 +164,7 @@ pub const Parser = struct {
         if (self.match(.NoShot)) return try self.ifStatement();
         if (self.match(.Deadass)) return try self.whileStatement();
         if (self.match(.Yeet)) return try self.returnStatement();
+        if (self.match(.Crashout)) return try self.tryStatement();
 
         return try self.expressionStatement();
     }
@@ -345,7 +379,76 @@ pub const Parser = struct {
             return node;
         }
 
+        if (self.match(.LeftBracket)) {
+            var elements = std.ArrayList(*Expr).init(self.allocator);
+            if (!self.check(.RightBracket)) {
+                while (true) {
+                    try elements.append(try self.expression());
+                    if (!self.match(.Comma)) break;
+                }
+            }
+            _ = try self.consume(.RightBracket, "Expected ']' after array elements");
+            node.* = .{ .Array = .{ .elements = elements } };
+            return node;
+        }
+
         try self.reportError(self.peek(), "Expected expression");
         return error.ParseError;
+    }
+
+    fn functionDeclaration(self: *Parser) !Stmt {
+        const name = try self.consume(.Identifier, "Expected function name");
+        _ = try self.consume(.LeftParen, "Expected '(' after function name");
+
+        var params = std.ArrayList(Token).init(self.allocator);
+        if (!self.check(.RightParen)) {
+            while (true) {
+                if (params.items.len >= 255) {
+                    try self.reportError(self.peek(), "Cannot have more than 255 parameters");
+                }
+
+                try params.append(try self.consume(.Identifier, "Expected parameter name"));
+
+                if (!self.match(.Comma)) break;
+            }
+        }
+        _ = try self.consume(.RightParen, "Expected ')' after parameters");
+
+        _ = try self.consume(.RealTalk, "Expected 'real_talk' before function body");
+        const body = try self.blockStatement();
+
+        const body_node = try self.allocator.create(Stmt);
+        body_node.* = body;
+
+        return Stmt{ .Function = .{
+            .name = name,
+            .params = params,
+            .body = body_node,
+        } };
+    }
+
+    fn tryStatement(self: *Parser) !Stmt {
+        _ = try self.consume(.RealTalk, "Expected 'real_talk' after 'crashout'");
+        const try_body = try self.blockStatement();
+
+        _ = try self.consume(.AintNoWay, "Expected 'ain't no way' after try block");
+        const error_var = try self.consume(.Identifier, "Expected error variable name");
+        _ = try self.consume(.RealTalk, "Expected 'real_talk' after error variable");
+        const catch_body = try self.blockStatement();
+
+        const catch_stmt = try self.allocator.create(Stmt);
+        catch_stmt.* = Stmt{ .Catch = .{
+            .error_var = error_var,
+            .body = try self.allocator.create(Stmt),
+        } };
+        catch_stmt.*.Catch.body.* = catch_body;
+
+        const try_stmt = try self.allocator.create(Stmt);
+        try_stmt.* = try_body;
+
+        return Stmt{ .Try = .{
+            .body = try_stmt,
+            .catch_clause = catch_stmt,
+        } };
     }
 };
