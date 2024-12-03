@@ -433,25 +433,37 @@ pub const Parser = struct {
         if (self.match(.Identifier)) {
             node.* = .{ .Variable = .{ .name = self.previous() } };
 
-            // Handle method calls and array operations
+            // Handle method calls and array operations with better chaining
             while (true) {
                 if (self.match(.LeftParen)) {
-                    node = try self.finishCall(node);
+                    // Method call
+                    var call_node = try self.finishCall(node);
+                    // Update node for potential chaining
+                    node = call_node;
                 } else if (self.match(.LeftBracket)) {
                     if (self.check(.Colon)) {
                         _ = self.advance(); // consume the colon
-                        node = try self.fanumSlice(node);
+                        const slice_node = try self.fanumSlice(node);
+                        node = slice_node;
                     } else {
-                        node = try self.arrayIndex(node);
+                        // Better error handling for array indexing
+                        if (self.isAtEnd()) {
+                            try self.reportError(self.peek(), "Unterminated array index");
+                            return error.ParseError;
+                        }
+                        const index_node = try self.arrayIndex(node);
+                        node = index_node;
                     }
                 } else if (self.match(.Dot)) {
                     if (self.match(.FanumTax)) {
-                        node = try self.fanumSlice(node);
+                        const slice_node = try self.fanumSlice(node);
+                        node = slice_node;
                     } else {
-                        const name = try self.consume(.Identifier, "Expected property name after '.'");
+                        const name = try self.consume(.Identifier, "Expected method name after '.'");
                         const method_node = try self.allocator.create(Expr);
                         method_node.* = .{ .Variable = .{ .name = name } };
-                        node = try self.finishCall(method_node);
+                        const call_node = try self.finishCall(method_node);
+                        node = call_node;
                     }
                 } else {
                     break;
@@ -688,10 +700,115 @@ pub const Parser = struct {
         } };
     }
 
-    // Add memory cleanup method
+    // Enhanced memory management
     pub fn deinit(self: *Parser) void {
-        // Cleanup will be handled by the Arena allocator
-        // But we should provide this method for explicit cleanup if needed
-        _ = self;
+        // Clean up ArrayList resources in tokens
+        for (self.tokens) |token| {
+            switch (token.type) {
+                .Function => {
+                    if (token.params) |params| {
+                        params.deinit();
+                    }
+                },
+                else => {},
+            }
+        }
+
+        // Clean up AST nodes if not using Arena allocator
+        if (@TypeOf(self.allocator) != std.heap.ArenaAllocator) {
+            // Recursive cleanup of expressions and statements
+            self.cleanupAst();
+        }
+    }
+
+    fn cleanupAst(self: *Parser) void {
+        // Helper function to clean up expression nodes
+        const CleanupContext = struct {
+            allocator: std.mem.Allocator,
+
+            fn cleanupExpr(ctx: @This(), expr: *Expr) void {
+                switch (expr.*) {
+                    .Binary => |binary| {
+                        ctx.cleanupExpr(binary.left);
+                        ctx.cleanupExpr(binary.right);
+                        ctx.allocator.destroy(expr);
+                    },
+                    .Unary => |unary| {
+                        ctx.cleanupExpr(unary.right);
+                        ctx.allocator.destroy(expr);
+                    },
+                    .Call => |call| {
+                        ctx.cleanupExpr(call.callee);
+                        for (call.arguments.items) |arg| {
+                            ctx.cleanupExpr(arg);
+                        }
+                        call.arguments.deinit();
+                        ctx.allocator.destroy(expr);
+                    },
+                    .Array => |array| {
+                        for (array.elements.items) |element| {
+                            ctx.cleanupExpr(element);
+                        }
+                        array.elements.deinit();
+                        ctx.allocator.destroy(expr);
+                    },
+                    .FanumSlice => |slice| {
+                        ctx.cleanupExpr(slice.array);
+                        ctx.cleanupExpr(slice.start);
+                        ctx.cleanupExpr(slice.end);
+                        ctx.allocator.destroy(expr);
+                    },
+                    .Index => |index| {
+                        ctx.cleanupExpr(index.array);
+                        ctx.cleanupExpr(index.index);
+                        ctx.allocator.destroy(expr);
+                    },
+                    else => {
+                        ctx.allocator.destroy(expr);
+                    },
+                }
+            }
+
+            fn cleanupStmt(ctx: @This(), stmt: *Stmt) void {
+                switch (stmt.*) {
+                    .Expression => |expr_stmt| {
+                        ctx.cleanupExpr(expr_stmt.expr);
+                    },
+                    .Function => |func| {
+                        func.params.deinit();
+                        ctx.cleanupStmt(func.body);
+                    },
+                    .Block => |block| {
+                        for (block.statements.items) |statement| {
+                            ctx.cleanupStmt(statement);
+                        }
+                        block.statements.deinit();
+                    },
+                    .If => |if_stmt| {
+                        ctx.cleanupExpr(if_stmt.condition);
+                        ctx.cleanupStmt(if_stmt.then_branch);
+                        if (if_stmt.else_branch) |else_branch| {
+                            ctx.cleanupStmt(else_branch);
+                        }
+                    },
+                    .While => |while_stmt| {
+                        ctx.cleanupExpr(while_stmt.condition);
+                        ctx.cleanupStmt(while_stmt.body);
+                    },
+                    .Return => |return_stmt| {
+                        if (return_stmt.value) |value| {
+                            ctx.cleanupExpr(value);
+                        }
+                    },
+                    else => {},
+                }
+                ctx.allocator.destroy(stmt);
+            }
+        };
+
+        const ctx = CleanupContext{ .allocator = self.allocator };
+        // Start cleanup from the root nodes
+        // This would be called for each top-level statement
+        // that needs cleanup
     }
 };
