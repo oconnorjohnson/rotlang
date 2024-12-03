@@ -97,3 +97,141 @@ pub const Environment = struct {
         return RuntimeError.UndefinedVariable;
     }
 };
+
+pub const Interpreter = struct {
+    environment: *Environment,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) !Interpreter {
+        var global_env = try allocator.create(Environment);
+        global_env.* = Environment.init(allocator, null);
+
+        return Interpreter{
+            .environment = global_env,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *Interpreter) void {
+        self.environment.deinit();
+        self.allocator.destroy(self.environment);
+    }
+
+    pub fn interpret(self: *Interpreter, statements: []const Stmt) !void {
+        for (statements) |stmt| {
+            try self.executeStatement(&stmt);
+        }
+    }
+
+    fn executeStatement(self: *Interpreter, stmt: *const Stmt) !void {
+        switch (stmt.*) {
+            .Expression => |expr_stmt| {
+                _ = try self.evaluateExpression(expr_stmt.expr);
+            },
+            .Declaration => |decl| {
+                var value: Value = .{ .null = {} };
+                if (decl.initializer) |initializer| {
+                    value = try self.evaluateExpression(initializer);
+                }
+                try self.environment.define(decl.name.lexeme, value);
+            },
+            .Block => |block| {
+                var new_env = Environment.init(self.allocator, self.environment);
+                defer new_env.deinit();
+
+                const previous = self.environment;
+                self.environment = &new_env;
+                defer self.environment = previous;
+
+                for (block.statements.items) |block_stmt| {
+                    try self.executeStatement(&block_stmt);
+                }
+            },
+            // ... more statement types to be implemented
+            else => @panic("Unimplemented statement type"),
+        }
+    }
+
+    fn evaluateExpression(self: *Interpreter, expr: *const Expr) !Value {
+        switch (expr.*) {
+            .Literal => |lit| {
+                return switch (lit.value.type) {
+                    .Number => Value{ .number = try std.fmt.parseFloat(f64, lit.value.lexeme) },
+                    .String => Value{ .string = lit.value.lexeme },
+                    else => Value{ .null = {} },
+                };
+            },
+            .Binary => |bin| {
+                const left = try self.evaluateExpression(bin.left);
+                const right = try self.evaluateExpression(bin.right);
+
+                return try self.evaluateBinaryOp(left, bin.operator, right);
+            },
+            .Unary => |un| {
+                const right = try self.evaluateExpression(un.right);
+                return try self.evaluateUnaryOp(un.operator, right);
+            },
+            .Variable => |var_expr| {
+                return try self.environment.get(var_expr.name);
+            },
+            .Assignment => |assign| {
+                const value = try self.evaluateExpression(assign.value);
+                try self.environment.assign(assign.name, value);
+                return value;
+            },
+            // ... more expression types to be implemented
+            else => @panic("Unimplemented expression type"),
+        }
+    }
+
+    fn evaluateBinaryOp(self: *Interpreter, left: Value, operator: Token, right: Value) !Value {
+        _ = self;
+        switch (operator.type) {
+            .Plus => {
+                if (left == .number and right == .number) {
+                    return Value{ .number = left.number + right.number };
+                }
+                if (left == .string and right == .string) {
+                    // String concatenation would go here
+                    @panic("String concatenation not implemented");
+                }
+                return RuntimeError.TypeError;
+            },
+            .Minus => {
+                if (left == .number and right == .number) {
+                    return Value{ .number = left.number - right.number };
+                }
+                return RuntimeError.TypeError;
+            },
+            .Star => {
+                if (left == .number and right == .number) {
+                    return Value{ .number = left.number * right.number };
+                }
+                return RuntimeError.TypeError;
+            },
+            .Slash => {
+                if (left == .number and right == .number) {
+                    if (right.number == 0) return RuntimeError.DivisionByZero;
+                    return Value{ .number = left.number / right.number };
+                }
+                return RuntimeError.TypeError;
+            },
+            // ... implement other operators
+            else => return RuntimeError.InvalidOperand,
+        }
+    }
+
+    fn evaluateUnaryOp(self: *Interpreter, operator: Token, right: Value) !Value {
+        _ = self;
+        switch (operator.type) {
+            .Minus => {
+                if (right == .number) {
+                    return Value{ .number = -right.number };
+                }
+                return RuntimeError.TypeError;
+            },
+            // ... implement other unary operators
+            else => return RuntimeError.InvalidOperand,
+        }
+    }
+};
