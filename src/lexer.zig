@@ -105,4 +105,48 @@ pub const Lexer = struct {
     pub fn deinit(self: *Lexer) void {
         self.tokens.deinit();
     }
+
+    pub fn scanTokens(self: *Lexer) !void { 
+        while (!self.isAtEnd()) { 
+            self.start = self.current;
+            try self.scanToken;
+        }
+
+        try self.tokens.append(Token.inin(.Eof, "", self.line));
+    }
+
+    fn scanToken(self: *Lexer) !void { 
+        const c = self.advance().
+        switch (c) { 
+            // single char tokens 
+            '(' => try self.addToken(.LeftParen),
+            ')' => try self.addToken(.RightParen),
+            '{' => try self.addToken(.LeftBrace),
+            '}' => try self.addToken(.RightBrace),
+            ',' => try self.addToken(.Comma),
+            '.' => try self.addToken(.Dot),
+            '-' => try self.addToken(.Minus),
+            '+' => try self.addToken(.Plus),
+            ';' => try self.addToken(.SemiColon),
+            '*' => try self.addToken(.Star),
+            '/' => try self.addToken(.Slash),
+            '=' => try self.addToken(.Equal),
+
+            // whitespace 
+            ' ', '\r', '\t' => {},
+            '\n' => self.line += 1,
+
+            else => { 
+                if (self.isDigit(c)) { 
+                    try self.number();
+                } else if (self.isAlpha(c)) { 
+                    try self.identifier();
+                } else { 
+                    try self.addToken(.Error);
+                }
+            },
+        }
+    }
+
+    
 };
