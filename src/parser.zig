@@ -174,4 +174,16 @@ pub const Parser = struct {
     }
 
     // helper methods
+    fn match(self: *Parser, types: TokenType) bool {
+        if (self.check(types)) {
+            _ = self.advance();
+            return true;
+        }
+        return false;
+    }
+
+    fn check(self: *Parser, type: TokenType) bool {
+        if (self.isAtEnd()) return false;
+        return self.peek().type == type;
+    }
 };
