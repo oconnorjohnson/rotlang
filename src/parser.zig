@@ -186,4 +186,13 @@ pub const Parser = struct {
         if (self.isAtEnd()) return false;
         return self.peek().type == type;
     }
+
+    fn advance(self: *Parser) Token {
+        if (!self.isAtEnd()) self.current += 1;
+        return self.previous();
+    }
+
+    fn isAtEnd(self: *Parser) bool {
+        return self.peek().type == .Eof;
+    }
 };
