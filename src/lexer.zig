@@ -158,6 +158,7 @@ pub const Lexer = struct {
 
     fn getKeywordType(text: []const u8) TokenType {
         const keywords = std.ComptimeStringMap(TokenType, .{
+            // Popular terms
             .{ "skibidi", .Skibidi },
             .{ "rizzler", .Rizzler },
             .{ "gyat", .Gyat },
@@ -169,14 +170,41 @@ pub const Lexer = struct {
             .{ "fanumtax", .FanumTax },
             .{ "backrooms", .Backrooms },
             .{ "sigma", .Sigma },
-            .{ "beta", .Beta },
-            .{ "alpha", .Alpha },
-            .{ "nocap", .NoCap },
             .{ "based", .Based },
+            .{ "nocap", .NoCap },
             .{ "frfr", .FrFr },
+
+            // Actions/Functions
             .{ "crashout", .Crashout },
             .{ "yeet", .Yeet },
             .{ "slay", .Slay },
+            .{ "mewing", .Mewing },
+            .{ "cranking", .Cranking },
+            .{ "vibing", .Vibing },
+            .{ "tweaking", .Tweaking },
+            .{ "hitting", .Hitting },
+            .{ "sheesh", .Sheesh },
+            .{ "ong", .Ong },
+
+            // State/Variable Related
+            .{ "sus", .Sus },
+            .{ "mid", .Mid },
+            .{ "clean", .Clean },
+            .{ "peak", .Peak },
+            .{ "devious", .Devious },
+            .{ "cursed", .Cursed },
+            .{ "unhinged", .Unhinged },
+            .{ "valid", .Valid },
+            .{ "ratiod", .Ratiod },
+
+            // Control Flow
+            .{ "noshot", .NoShot },
+            .{ "deadass", .Deadass },
+            .{ "aintnoway", .AintNoWay },
+            .{ "realtalk", .RealTalk },
+            .{ "respectfully", .Respectfully },
+            .{ "lowkey", .Lowkey },
+            .{ "highkey", .Highkey },
         });
 
         return keywords.get(text) orelse .Identifier;
