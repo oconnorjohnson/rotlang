@@ -156,5 +156,29 @@ pub const Lexer = struct {
         try self.addToken(token_type);
     }
 
-    
+    fn getKeyWordType(self: *Lexer, text: []const u8) TokenType { 
+        const keywords = std.ComtimeStringMap(TokenType, .{
+            .{"skibidi", .Skibidi},
+              .{ "rizzler", .Rizzler },
+            .{ "gyat", .Gyat },
+            .{ "bussin", .Bussin },
+            .{ "bruh", .Bruh },
+            .{ "npc", .Npc },
+            .{ "griddy", .Griddy },
+            .{ "clutch", .Clutch },
+            .{ "fanumtax", .FanumTax },
+            .{ "backrooms", .Backrooms },
+            .{ "sigma", .Sigma },
+            .{ "beta", .Beta },
+            .{ "alpha", .Alpha },
+            .{ "nocap", .NoCap },
+            .{ "based", .Based },
+            .{ "frfr", .FrFr },
+            .{ "crashout", .Crashout },
+            .{ "yeet", .Yeet },
+            .{ "slay", .Slay },
+        });
+
+        return keywords.get(text) orelse .Identifier;
+    }
 };
