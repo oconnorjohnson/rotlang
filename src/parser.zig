@@ -437,7 +437,7 @@ pub const Parser = struct {
             while (true) {
                 if (self.match(.LeftParen)) {
                     // Method call
-                    var call_node = try self.finishCall(node);
+                    const call_node = try self.finishCall(node);
                     // Update node for potential chaining
                     node = call_node;
                 } else if (self.match(.LeftBracket)) {
@@ -722,20 +722,19 @@ pub const Parser = struct {
     }
 
     fn cleanupAst(self: *Parser) void {
-        // Helper function to clean up expression nodes
         const CleanupContext = struct {
             allocator: std.mem.Allocator,
 
-            fn cleanupExpr(ctx: @This(), expr: *Expr) void {
-                switch (expr.*) {
+            fn cleanupExpr(ctx: @This(), expr_node: *Expr) void {
+                switch (expr_node.*) {
                     .Binary => |binary| {
                         ctx.cleanupExpr(binary.left);
                         ctx.cleanupExpr(binary.right);
-                        ctx.allocator.destroy(expr);
+                        ctx.allocator.destroy(expr_node);
                     },
-                    .Unary => |unary| {
-                        ctx.cleanupExpr(unary.right);
-                        ctx.allocator.destroy(expr);
+                    .Unary => |un| { // Renamed from 'unary' to avoid shadowing
+                        ctx.cleanupExpr(un.right);
+                        ctx.allocator.destroy(expr_node);
                     },
                     .Call => |call| {
                         ctx.cleanupExpr(call.callee);
@@ -743,34 +742,34 @@ pub const Parser = struct {
                             ctx.cleanupExpr(arg);
                         }
                         call.arguments.deinit();
-                        ctx.allocator.destroy(expr);
+                        ctx.allocator.destroy(expr_node);
                     },
                     .Array => |array| {
                         for (array.elements.items) |element| {
                             ctx.cleanupExpr(element);
                         }
                         array.elements.deinit();
-                        ctx.allocator.destroy(expr);
+                        ctx.allocator.destroy(expr_node);
                     },
                     .FanumSlice => |slice| {
                         ctx.cleanupExpr(slice.array);
                         ctx.cleanupExpr(slice.start);
                         ctx.cleanupExpr(slice.end);
-                        ctx.allocator.destroy(expr);
+                        ctx.allocator.destroy(expr_node);
                     },
                     .Index => |index| {
                         ctx.cleanupExpr(index.array);
                         ctx.cleanupExpr(index.index);
-                        ctx.allocator.destroy(expr);
+                        ctx.allocator.destroy(expr_node);
                     },
                     else => {
-                        ctx.allocator.destroy(expr);
+                        ctx.allocator.destroy(expr_node);
                     },
                 }
             }
 
-            fn cleanupStmt(ctx: @This(), stmt: *Stmt) void {
-                switch (stmt.*) {
+            fn cleanupStmt(ctx: @This(), stmt_node: *Stmt) void {
+                switch (stmt_node.*) {
                     .Expression => |expr_stmt| {
                         ctx.cleanupExpr(expr_stmt.expr);
                     },
@@ -779,8 +778,8 @@ pub const Parser = struct {
                         ctx.cleanupStmt(func.body);
                     },
                     .Block => |block| {
-                        for (block.statements.items) |statement| {
-                            ctx.cleanupStmt(statement);
+                        for (block.statements.items) |stmt| { // Renamed from 'statement'
+                            ctx.cleanupStmt(stmt);
                         }
                         block.statements.deinit();
                     },
@@ -802,13 +801,13 @@ pub const Parser = struct {
                     },
                     else => {},
                 }
-                ctx.allocator.destroy(stmt);
+                ctx.allocator.destroy(stmt_node);
             }
         };
 
+        // Initialize context and start cleanup
         const ctx = CleanupContext{ .allocator = self.allocator };
-        // Start cleanup from the root nodes
-        // This would be called for each top-level statement
-        // that needs cleanup
+        // TODO: Add actual cleanup calls here based on your AST structure
+        _ = ctx; // Silence unused variable warning until implementation is complete
     }
 };
