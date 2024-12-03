@@ -212,5 +212,14 @@ pub const Lexer = struct {
         try self.tokens.append(Token.init(token_type, lexeme, self.line));
     }
 
+    // helper methods 
+    fn advance(self: *Lexer) u8 { 
+        self.current += 1;
+        return self.source[self.current - 1];
+    }
 
+    fn peek(self: *Lexer) u8 { 
+        if (self.isAtEnd()) return 0;
+        return self.source[self.current];
+    }
 };
