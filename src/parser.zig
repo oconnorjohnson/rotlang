@@ -78,4 +78,13 @@ pub const Parser = struct {
             value: ?*Expr,
         },
     };
+
+    pub fn init(allocator: std.mem.Allocator, tokens: []const Token) Parser {
+        return Parser{
+            .tokens = tokens,
+            .current = 0,
+            .allocator = allocator,
+            .had_error = false,
+        };
+    }
 };
