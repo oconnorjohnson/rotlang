@@ -99,4 +99,30 @@ pub const Parser = struct {
 
         return statements;
     }
+
+    fn declaration(self: *Parser) !?Stmt {
+        if (self.match(.Sus) or self.match(.Clean) or self.match(.Peak)) {
+            return try self.varDeclaration();
+        }
+
+        return try self.statement();
+    }
+
+    fn varDeclaration(self: *Parser) !Stmt {
+        const name = self.previous();
+
+        var initializer: ?*Expr = null;
+        if (self.match(.Equal)) {
+            initializer = try self.expression();
+        }
+
+        _ = try self.consume(.Semicolon, "Expected ';' after variable declaration");
+
+        return Stmt{
+            .DEeclaration = .{
+                .name = name,
+                .initializer = initializer,
+            },
+        };
+    }
 };
