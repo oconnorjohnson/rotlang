@@ -15,6 +15,28 @@ pub const RuntimeError = error{
     Break,
     Continue,
     Custom,
+    IndexOutOfBounds,
+    InvalidErrorValue,
+    ErrorPropagation,
+};
+
+pub const ErrorValue = struct {
+    message: []const u8,
+    line: usize,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, message: []const u8, line: usize) !ErrorValue {
+        const msg_copy = try allocator.dupe(u8, message);
+        return ErrorValue{
+            .message = msg_copy,
+            .line = line,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *ErrorValue) void {
+        self.allocator.free(self.message);
+    }
 };
 
 pub const Value = union(enum) {
@@ -24,6 +46,7 @@ pub const Value = union(enum) {
     array: std.ArrayList(Value),
     null: void,
     function: Function,
+    error_value: ErrorValue,
 
     pub fn format(
         self: Value,
@@ -46,22 +69,26 @@ pub const Value = union(enum) {
                 }
                 try writer.writeAll("]");
             },
-            .null => try writer.writeAll("null"),
+            .null => {
+                try writer.writeAll("null");
+            },
+            .error_value => |err| try writer.print("Error: {s} at line {d}", .{ err.message, err.line }),
+            .function => |func| try writer.print("Function {s}", .{func.name.lexeme}),
         }
     }
 
     pub fn deinit(self: *Value) void {
         switch (self.*) {
             .array => |*arr| arr.deinit(),
+            .error_value => |*err| err.deinit(),
             else => {},
         }
     }
 
     pub fn clone(self: Value, allocator: std.mem.Allocator) !Value {
         return switch (self) {
-            .array => |arr| Value{
-                .array = try cloneArrayList(arr, allocator),
-            },
+            .array => |arr| Value{ .array = try cloneArrayList(arr, allocator) },
+            .error_value => |err| Value{ .error_value = try ErrorValue.init(allocator, err.message, err.line) },
             else => self,
         };
     }
@@ -264,6 +291,49 @@ pub const Interpreter = struct {
                 return RuntimeError.ReturnValue;
             },
 
+            .Try => |try_stmt| {
+                // Create new environment for try block
+                var try_env = Environment.init(self.allocator, self.environment);
+                defer try_env.deinit();
+
+                const previous = self.environment;
+                self.environment = &try_env;
+
+                // Execute try block and catch any errors
+                self.executeStatement(try_stmt.body) catch |err| {
+                    // Restore environment
+                    self.environment = previous;
+
+                    // Handle the error in catch block
+                    if (try_stmt.catch_clause) |catch_clause| {
+                        var catch_env = Environment.init(self.allocator, self.environment);
+                        defer catch_env.deinit();
+
+                        self.environment = &catch_env;
+                        defer self.environment = previous;
+
+                        // Create error value and bind it to error variable
+                        const error_value = try ErrorValue.init(self.allocator, @errorName(err), catch_clause.error_var.line);
+                        try self.environment.define(catch_clause.error_var.lexeme, Value{ .error_value = error_value });
+
+                        // Execute catch block
+                        try self.executeStatement(catch_clause.body);
+                        return;
+                    }
+
+                    // If no catch clause, propagate the error
+                    return err;
+                };
+
+                // Restore environment after successful try block
+                self.environment = previous;
+            },
+
+            .Catch => |_| {
+                // Catch statements should only be executed through Try statements
+                return RuntimeError.InvalidErrorValue;
+            },
+
             else => @panic("Unimplemented statement type"),
         }
     }
@@ -343,13 +413,23 @@ pub const Interpreter = struct {
 
             .Call => |call| {
                 const callee = try self.evaluateExpression(call.callee);
+
+                // Check if we're calling an error value (error propagation)
+                if (callee == .error_value) {
+                    return RuntimeError.ErrorPropagation;
+                }
+
                 if (callee != .function) return RuntimeError.TypeError;
 
                 var args = std.ArrayList(Value).init(self.allocator);
                 defer args.deinit();
 
+                // Check for error values in arguments
                 for (call.arguments.items) |arg| {
                     const value = try self.evaluateExpression(arg);
+                    if (value == .error_value) {
+                        return RuntimeError.ErrorPropagation;
+                    }
                     try args.append(try value.clone(self.allocator));
                 }
 
@@ -450,6 +530,24 @@ pub const Interpreter = struct {
         };
 
         return Value{ .null = {} };
+    }
+
+    fn createErrorValue(self: *Interpreter, message: []const u8, line: usize) !Value {
+        const error_value = try ErrorValue.init(self.allocator, message, line);
+        return Value{ .error_value = error_value };
+    }
+
+    // Helper function to check if a value is an error
+    fn isError(value: Value) bool {
+        return value == .error_value;
+    }
+
+    // Helper function to propagate errors
+    fn propagateError(self: *Interpreter, value: Value) !Value {
+        if (self.isError(value)) {
+            return RuntimeError.ErrorPropagation;
+        }
+        return value;
     }
 };
 
