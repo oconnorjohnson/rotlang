@@ -222,4 +222,24 @@ pub const Lexer = struct {
         if (self.isAtEnd()) return 0;
         return self.source[self.current];
     }
+
+    fn peekNext(self: *Lexer) u8 { 
+        if (self.current + 1 >= self.source.len) return 0;
+        return self.source[self.current + 1];
+    }
+
+    fn isAtEnd(self: *Lexer) bool { 
+        return self.current >= self.source.len;
+    }
+
+    fn isDigit(self: *Lexer, c: u8) bool { 
+        return c >= '0' and c <= '9';
+    }
+
+    fn isALpha(self: *Lexer, c: u8) bool { 
+        return (c >= 'a' and c <= 'z') or 
+            (c >= 'A' and c <= 'Z') or 
+            c == '_';
+    }
+    
 };
