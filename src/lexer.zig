@@ -193,5 +193,18 @@ pub const Lexer = struct {
         try self.addToken(.Number);
     }
 
+    fn string(self: *Lexer) !void { 
+        while (self.peek() != '"' and !selff.isAtEnd()) : (self.advance()) { 
+            if (self.peek() == '\n') self.line += 1;
+        }
+
+        if (self.isAtEnd()) { 
+            try self.addToken(.Error);
+            return;
+        }
+
+        self.advance();
+        try self.addToken(.String);
+    }
     
 };
