@@ -106,8 +106,8 @@ pub const Lexer = struct {
         self.tokens.deinit();
     }
 
-    pub fn scanTokens(self: *Lexer) !void { 
-        while (!self.isAtEnd()) { 
+    pub fn scanTokens(self: *Lexer) !void {
+        while (!self.isAtEnd()) {
             self.start = self.current;
             try self.scanToken;
         }
@@ -115,10 +115,10 @@ pub const Lexer = struct {
         try self.tokens.append(Token.inin(.Eof, "", self.line));
     }
 
-    fn scanToken(self: *Lexer) !void { 
-        const c = self.advance().
-        switch (c) { 
-            // single char tokens 
+    fn scanToken(self: *Lexer) !void {
+        const c = self.advance();
+        switch (c) {
+            // single char tokens
             '(' => try self.addToken(.LeftParen),
             ')' => try self.addToken(.RightParen),
             '{' => try self.addToken(.LeftBrace),
@@ -132,23 +132,23 @@ pub const Lexer = struct {
             '/' => try self.addToken(.Slash),
             '=' => try self.addToken(.Equal),
 
-            // whitespace 
+            // whitespace
             ' ', '\r', '\t' => {},
             '\n' => self.line += 1,
 
-            else => { 
-                if (self.isDigit(c)) { 
+            else => {
+                if (self.isDigit(c)) {
                     try self.number();
-                } else if (self.isAlpha(c)) { 
+                } else if (self.isAlpha(c)) {
                     try self.identifier();
-                } else { 
+                } else {
                     try self.addToken(.Error);
                 }
             },
         }
     }
 
-    fn identifier(self: *Lexer) !void { 
+    fn identifier(self: *Lexer) !void {
         while (self.isAlphaNumeric(self.peek())) : (self.advance()) {}
 
         const text = self.source[self.start..self.current];
@@ -156,10 +156,10 @@ pub const Lexer = struct {
         try self.addToken(token_type);
     }
 
-    fn getKeyWordType(self: *Lexer, text: []const u8) TokenType { 
-        const keywords = std.ComtimeStringMap(TokenType, .{
-            .{"skibidi", .Skibidi},
-              .{ "rizzler", .Rizzler },
+    fn getKeywordType(text: []const u8) TokenType {
+        const keywords = std.ComptimeStringMap(TokenType, .{
+            .{ "skibidi", .Skibidi },
+            .{ "rizzler", .Rizzler },
             .{ "gyat", .Gyat },
             .{ "bussin", .Bussin },
             .{ "bruh", .Bruh },
@@ -182,10 +182,10 @@ pub const Lexer = struct {
         return keywords.get(text) orelse .Identifier;
     }
 
-    fn number(self: *Lexer) !void { 
+    fn number(self: *Lexer) !void {
         while (self.isdigit(self.peek())) : (self.advance()) {}
 
-        if (self.peek() == '.' and self.isDigit(self.peekNext())) { 
+        if (self.peek() == '.' and self.isDigit(self.peekNext())) {
             self.advance();
             while (self.isDigit(self.peek())) : (self.advance()) {}
         }
@@ -193,12 +193,12 @@ pub const Lexer = struct {
         try self.addToken(.Number);
     }
 
-    fn string(self: *Lexer) !void { 
-        while (self.peek() != '"' and !selff.isAtEnd()) : (self.advance()) { 
+    fn string(self: *Lexer) !void {
+        while (self.peek() != '"' and !self.isAtEnd()) : (self.advance()) {
             if (self.peek() == '\n') self.line += 1;
         }
 
-        if (self.isAtEnd()) { 
+        if (self.isAtEnd()) {
             try self.addToken(.Error);
             return;
         }
@@ -207,39 +207,42 @@ pub const Lexer = struct {
         try self.addToken(.String);
     }
 
-    fn addToken(self: *Lexer, token_type: TokenType) !void { 
+    fn addToken(self: *Lexer, token_type: TokenType) !void {
         const lexeme = self.source[self.start..self.current];
         try self.tokens.append(Token.init(token_type, lexeme, self.line));
     }
 
-    // helper methods 
-    fn advance(self: *Lexer) u8 { 
+    // helper methods
+    fn advance(self: *Lexer) u8 {
         self.current += 1;
         return self.source[self.current - 1];
     }
 
-    fn peek(self: *Lexer) u8 { 
+    fn peek(self: *Lexer) u8 {
         if (self.isAtEnd()) return 0;
         return self.source[self.current];
     }
 
-    fn peekNext(self: *Lexer) u8 { 
+    fn peekNext(self: *Lexer) u8 {
         if (self.current + 1 >= self.source.len) return 0;
         return self.source[self.current + 1];
     }
 
-    fn isAtEnd(self: *Lexer) bool { 
+    fn isAtEnd(self: *Lexer) bool {
         return self.current >= self.source.len;
     }
 
-    fn isDigit(self: *Lexer, c: u8) bool { 
+    fn isDigit(c: u8) bool {
         return c >= '0' and c <= '9';
     }
 
-    fn isALpha(self: *Lexer, c: u8) bool { 
-        return (c >= 'a' and c <= 'z') or 
-            (c >= 'A' and c <= 'Z') or 
+    fn isAlpha(c: u8) bool {
+        return (c >= 'a' and c <= 'z') or
+            (c >= 'A' and c <= 'Z') or
             c == '_';
     }
-    
+
+    fn isAlphaNumeric(self: *Lexer, c: u8) bool {
+        return self.isAlpha(c) or self.isDigit(c);
+    }
 };
