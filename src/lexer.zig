@@ -206,5 +206,11 @@ pub const Lexer = struct {
         self.advance();
         try self.addToken(.String);
     }
-    
+
+    fn addToken(self: *Lexer, token_type: TokenType) !void { 
+        const lexeme = self.source[self.start..self.current];
+        try self.tokens.append(Token.init(token_type, lexeme, self.line));
+    }
+
+
 };
