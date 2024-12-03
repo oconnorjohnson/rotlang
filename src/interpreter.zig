@@ -48,7 +48,34 @@ pub const Value = union(enum) {
             .null => try writer.writeAll("null"),
         }
     }
+
+    pub fn deinit(self: *Value) void {
+        switch (self.*) {
+            .array => |*arr| arr.deinit(),
+            else => {},
+        }
+    }
+
+    pub fn clone(self: Value, allocator: std.mem.Allocator) !Value {
+        return switch (self) {
+            .array => |arr| Value{
+                .array = try cloneArrayList(arr, allocator),
+            },
+            else => self,
+        };
+    }
 };
+
+fn cloneArrayList(original: std.ArrayList(Value), allocator: std.mem.Allocator) !std.ArrayList(Value) {
+    var new_list = std.ArrayList(Value).init(allocator);
+    try new_list.ensureTotalCapacity(original.items.len);
+
+    for (original.items) |item| {
+        try new_list.append(try item.clone(allocator));
+    }
+
+    return new_list;
+}
 
 pub const Environment = struct {
     values: std.StringHashMap(Value),
@@ -64,16 +91,26 @@ pub const Environment = struct {
     }
 
     pub fn deinit(self: *Environment) void {
+        var iter = self.values.iterator();
+        while (iter.next()) |entry| {
+            var value = entry.value_ptr;
+            value.deinit();
+        }
         self.values.deinit();
     }
 
     pub fn define(self: *Environment, name: []const u8, value: Value) !void {
-        try self.values.put(name, value);
+        // If we're redefining a variable, clean up the old value first
+        if (self.values.getPtr(name)) |old_value| {
+            old_value.deinit();
+        }
+        const cloned_value = try value.clone(self.allocator);
+        try self.values.put(name, cloned_value);
     }
 
     pub fn get(self: *Environment, name: Token) !Value {
         if (self.values.get(name.lexeme)) |value| {
-            return value;
+            return value.clone(self.allocator);
         }
 
         if (self.enclosing) |enclosing| {
@@ -84,8 +121,9 @@ pub const Environment = struct {
     }
 
     pub fn assign(self: *Environment, name: Token, value: Value) !void {
-        if (self.values.contains(name.lexeme)) {
-            try self.values.put(name.lexeme, value);
+        if (self.values.getPtr(name.lexeme)) |old_value| {
+            old_value.deinit();
+            try self.values.put(name.lexeme, try value.clone(self.allocator));
             return;
         }
 
@@ -96,6 +134,37 @@ pub const Environment = struct {
 
         return RuntimeError.UndefinedVariable;
     }
+
+    pub fn getAt(self: *Environment, distance: usize, name: []const u8) !Value {
+        const environment = try self.ancestor(distance);
+        if (environment.values.get(name)) |value| {
+            return value.clone(self.allocator);
+        }
+        return RuntimeError.UndefinedVariable;
+    }
+
+    pub fn assignAt(self: *Environment, distance: usize, name: Token, value: Value) !void {
+        const environment = try self.ancestor(distance);
+        if (environment.values.getPtr(name.lexeme)) |old_value| {
+            old_value.deinit();
+            try environment.values.put(name.lexeme, try value.clone(self.allocator));
+        } else {
+            return RuntimeError.UndefinedVariable;
+        }
+    }
+
+    fn ancestor(self: *Environment, distance: usize) !*Environment {
+        var environment: *Environment = self;
+        var i: usize = 0;
+        while (i < distance) : (i += 1) {
+            if (environment.enclosing) |enclosing| {
+                environment = enclosing;
+            } else {
+                return RuntimeError.UndefinedVariable;
+            }
+        }
+        return environment;
+    }
 };
 
 pub const Interpreter = struct {
@@ -103,7 +172,7 @@ pub const Interpreter = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !Interpreter {
-        var global_env = try allocator.create(Environment);
+        const global_env = try allocator.create(Environment);
         global_env.* = Environment.init(allocator, null);
 
         return Interpreter{
