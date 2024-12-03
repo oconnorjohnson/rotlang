@@ -70,6 +70,14 @@ pub const TokenType: type = enum {
 
     Eof, // end of file
     Error, // errors
+
+    // Add new multi-character operators
+    EqualEqual,
+    NotEqual,
+    LessThan,
+    LessEqual,
+    GreaterThan,
+    GreaterEqual,
 };
 
 pub const Token = struct {
@@ -136,7 +144,35 @@ pub const Lexer = struct {
                     try self.addToken(.Slash);
                 }
             },
-            '=' => try self.addToken(.Equal),
+            '=' => {
+                if (self.match('=')) {
+                    try self.addToken(.EqualEqual);
+                } else {
+                    try self.addToken(.Equal);
+                }
+            },
+            '!' => {
+                if (self.match('=')) {
+                    try self.addToken(.NotEqual);
+                } else {
+                    std.debug.print("Error at line {d}: Unexpected character '!'\n", .{self.line});
+                    try self.addToken(.Error);
+                }
+            },
+            '<' => {
+                if (self.match('=')) {
+                    try self.addToken(.LessEqual);
+                } else {
+                    try self.addToken(.LessThan);
+                }
+            },
+            '>' => {
+                if (self.match('=')) {
+                    try self.addToken(.GreaterEqual);
+                } else {
+                    try self.addToken(.GreaterThan);
+                }
+            },
             '"' => try self.string(),
 
             ' ', '\r', '\t' => {},
@@ -242,33 +278,81 @@ pub const Lexer = struct {
 
     fn string(self: *Lexer) !void {
         var had_escape = false;
+        var string_content = std.ArrayList(u8).init(self.allocator);
+        defer string_content.deinit();
+
         while (!self.isAtEnd()) {
             const c = self.peek();
             switch (c) {
                 '"' => {
                     if (!had_escape) {
                         self.advance();
+                        // Create token with processed string content
                         try self.addToken(.String);
                         return;
                     }
+                    try string_content.append('"');
                     had_escape = false;
                 },
                 '\\' => {
-                    had_escape = !had_escape;
+                    if (had_escape) {
+                        try string_content.append('\\');
+                        had_escape = false;
+                    } else {
+                        had_escape = true;
+                    }
+                    self.advance();
+                },
+                'n' => {
+                    if (had_escape) {
+                        try string_content.append('\n');
+                        had_escape = false;
+                    } else {
+                        try string_content.append('n');
+                    }
+                    self.advance();
+                },
+                'r' => {
+                    if (had_escape) {
+                        try string_content.append('\r');
+                        had_escape = false;
+                    } else {
+                        try string_content.append('r');
+                    }
+                    self.advance();
+                },
+                't' => {
+                    if (had_escape) {
+                        try string_content.append('\t');
+                        had_escape = false;
+                    } else {
+                        try string_content.append('t');
+                    }
                     self.advance();
                 },
                 '\n' => {
                     self.line += 1;
-                    had_escape = false;
+                    if (had_escape) {
+                        had_escape = false;
+                    } else {
+                        try string_content.append('\n');
+                    }
                     self.advance();
                 },
                 else => {
-                    had_escape = false;
+                    if (had_escape) {
+                        // Invalid escape sequence
+                        std.debug.print("Error at line {d}: Invalid escape sequence '\\{c}'\n", .{ self.line, c });
+                        try self.addToken(.Error);
+                        return;
+                    }
+                    try string_content.append(c);
                     self.advance();
                 },
             }
         }
 
+        // Unterminated string
         std.debug.print("Error at line {d}: Unterminated string\n", .{self.line});
         try self.addToken(.Error);
     }
