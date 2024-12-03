@@ -195,4 +195,36 @@ pub const Parser = struct {
     fn isAtEnd(self: *Parser) bool {
         return self.peek().type == .Eof;
     }
+
+    fn peek(self: *Parser) Token {
+        return self.tokens[self.current];
+    }
+
+    fn previous(self: *Parser) Token {
+        return self.tokens[self.current - 1];
+    }
+
+    fn consume(self: *Parser, type: TokenType, message: []const u8) !Token {
+        if (self.check(type)) return self.advance();
+        try self.reportError(self.peek(), message);
+        return error.ParseError;
+    }
+
+    fn reportError(self: *Parser, token: Token, message: []const u8) !void {
+        self.had_error = true;
+        std.debug.print("Error at {s}: {s}\n", .{ token.lexeme, message });
+    }
+
+    fn synchronize(self: *Parser) void {
+        self.advance();
+
+        while (!self.isAtEnd()) {
+            if (self.previous().type == .Semicolon) return;
+
+            switch (self.peek().type) {
+                .RealTalk, .NoShot, .Deadass, .Yeet, .Sus, .Clean, .Peak => return,
+                else => _ = self.advance(),
+            }
+        }
+    }
 };
