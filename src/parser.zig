@@ -227,4 +227,125 @@ pub const Parser = struct {
             }
         }
     }
+
+    // expression parsing methods
+    fn expression(self: *Parser) !*Expr {
+        return try self.assignment();
+    }
+
+    fn assignment(self: *Parser) !*Expr {
+        var expr = try self.equality();
+
+        if (self.match(.Equal)) {
+            const equals = self.previous();
+            const value = try self.assignment();
+
+            if (expr.* == .Variable) {
+                const name = expr.Variable.name;
+                const node = try self.allocator.create(Expr);
+                node.* = .{ .Assignment = .{ .name = name, .value = value } };
+                return node;
+            }
+
+            try self.reportError(equals, "Invalid assignment target");
+        }
+
+        return expr;
+    }
+
+    fn equality(self: *Parser) !*Expr {
+        var expr = try self.comparison();
+
+        while (self.match(.EqualEqual) or self.match(.NotEqual)) {
+            const operator = self.previous();
+            const right = try self.comparison();
+            const node = try self.allocator.create(Expr);
+            node.* = .{ .Binary = .{ .left = expr, .operator = operator, .right = right } };
+            expr = node;
+        }
+
+        return expr;
+    }
+
+    fn comparison(self: *Parser) !*Expr {
+        var expr = try self.term();
+
+        while (self.match(.LessThan) or
+            self.match(.LessEqual) or
+            self.match(.GreaterThan) or
+            self.match(.GreaterEqual))
+        {
+            const operator = self.previous();
+            const right = try self.term();
+            const node = try self.allocator.create(Expr);
+            node.* = .{ .Binary = .{ .left = expr, .operator = operator, .right = right } };
+            expr = node;
+        }
+
+        return expr;
+    }
+
+    fn term(self: *Parser) !*Expr {
+        var expr = try self.factor();
+
+        while (self.match(.Plus) or self.match(.Minus)) {
+            const operator = self.previous();
+            const right = try self.factor();
+            const node = try self.allocator.create(Expr);
+            node.* = .{ .Binary = .{ .left = expr, .operator = operator, .right = right } };
+            expr = node;
+        }
+
+        return expr;
+    }
+
+    fn factor(self: *Parser) !*Expr {
+        var expr = try self.unary();
+
+        while (self.match(.Star) or self.match(.Slash)) {
+            const operator = self.previous();
+            const right = try self.unary();
+            const node = try self.allocator.create(Expr);
+            node.* = .{ .Binary = .{ .left = expr, .operator = operator, .right = right } };
+            expr = node;
+        }
+
+        return expr;
+    }
+
+    fn unary(self: *Parser) !*Expr {
+        if (self.match(.Minus)) {
+            const operator = self.previous();
+            const right = try self.unary();
+            const node = try self.allocator.create(Expr);
+            node.* = .{ .Unary = .{ .operator = operator, .right = right } };
+            return node;
+        }
+
+        return try self.primary();
+    }
+
+    fn primary(self: *Parser) !*Expr {
+        const node = try self.allocator.create(Expr);
+
+        if (self.match(.Number) or self.match(.String)) {
+            node.* = .{ .Literal = .{ .value = self.previous() } };
+            return node;
+        }
+
+        if (self.match(.Identifier)) {
+            node.* = .{ .Variable = .{ .name = self.previous() } };
+            return node;
+        }
+
+        if (self.match(.LeftParen)) {
+            const expr = try self.expression();
+            _ = try self.consume(.RightParen, "Expected ')' after expression");
+            node.* = .{ .Grouping = .{ .expression = expr } };
+            return node;
+        }
+
+        try self.reportError(self.peek(), "Expected expression");
+        return error.ParseError;
+    }
 };
