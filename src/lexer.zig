@@ -109,10 +109,10 @@ pub const Lexer = struct {
     pub fn scanTokens(self: *Lexer) !void {
         while (!self.isAtEnd()) {
             self.start = self.current;
-            try self.scanToken;
+            try self.scanToken();
         }
 
-        try self.tokens.append(Token.inin(.Eof, "", self.line));
+        try self.tokens.append(Token.init(.Eof, "", self.line));
     }
 
     fn scanToken(self: *Lexer) !void {
@@ -131,6 +131,7 @@ pub const Lexer = struct {
             '*' => try self.addToken(.Star),
             '/' => try self.addToken(.Slash),
             '=' => try self.addToken(.Equal),
+            '"' => try self.string(),
 
             // whitespace
             ' ', '\r', '\t' => {},
@@ -170,6 +171,8 @@ pub const Lexer = struct {
             .{ "fanumtax", .FanumTax },
             .{ "backrooms", .Backrooms },
             .{ "sigma", .Sigma },
+            .{ "beta", .Beta },
+            .{ "alpha", .Alpha },
             .{ "based", .Based },
             .{ "nocap", .NoCap },
             .{ "frfr", .FrFr },
@@ -211,7 +214,7 @@ pub const Lexer = struct {
     }
 
     fn number(self: *Lexer) !void {
-        while (self.isdigit(self.peek())) : (self.advance()) {}
+        while (self.isDigit(self.peek())) : (self.advance()) {}
 
         if (self.peek() == '.' and self.isDigit(self.peekNext())) {
             self.advance();
@@ -270,7 +273,7 @@ pub const Lexer = struct {
             c == '_';
     }
 
-    fn isAlphaNumeric(self: *Lexer, c: u8) bool {
-        return self.isAlpha(c) or self.isDigit(c);
+    fn isAlphaNumeric(c: u8) bool {
+        return isAlpha(c) or isDigit(c);
     }
 };
