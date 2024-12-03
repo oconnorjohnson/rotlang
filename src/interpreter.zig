@@ -23,6 +23,7 @@ pub const Value = union(enum) {
     boolean: bool,
     array: std.ArrayList(Value),
     null: void,
+    function: Function,
 
     pub fn format(
         self: Value,
@@ -216,7 +217,53 @@ pub const Interpreter = struct {
                     try self.executeStatement(&block_stmt);
                 }
             },
-            // ... more statement types to be implemented
+            .If => |if_stmt| {
+                const condition = try self.evaluateExpression(if_stmt.condition);
+                const is_truthy = try self.isTruthy(condition);
+
+                if (is_truthy) {
+                    try self.executeStatement(if_stmt.then_branch);
+                } else if (if_stmt.else_branch) |else_branch| {
+                    try self.executeStatement(else_branch);
+                }
+            },
+
+            .While => |while_stmt| {
+                while (true) {
+                    const condition = try self.evaluateExpression(while_stmt.condition);
+                    const is_truthy = try self.isTruthy(condition);
+                    if (!is_truthy) break;
+
+                    self.executeStatement(while_stmt.body) catch |err| {
+                        switch (err) {
+                            RuntimeError.Break => break,
+                            RuntimeError.Continue => continue,
+                            else => return err,
+                        }
+                    };
+                }
+            },
+
+            .Function => |func| {
+                // Create function value and store in environment
+                const function = Value{ .function = .{
+                    .type = func.type,
+                    .name = func.name,
+                    .params = func.params,
+                    .body = func.body,
+                    .closure = self.environment,
+                } };
+                try self.environment.define(func.name.lexeme, function);
+            },
+
+            .Return => |ret| {
+                var value = Value{ .null = {} };
+                if (ret.value) |expr| {
+                    value = try self.evaluateExpression(expr);
+                }
+                return RuntimeError.ReturnValue;
+            },
+
             else => @panic("Unimplemented statement type"),
         }
     }
@@ -248,7 +295,67 @@ pub const Interpreter = struct {
                 try self.environment.assign(assign.name, value);
                 return value;
             },
-            // ... more expression types to be implemented
+            .Array => |array| {
+                var elements = std.ArrayList(Value).init(self.allocator);
+                for (array.elements.items) |element| {
+                    const value = try self.evaluateExpression(element);
+                    try elements.append(try value.clone(self.allocator));
+                }
+                return Value{ .array = elements };
+            },
+
+            .Index => |index| {
+                const array = try self.evaluateExpression(index.array);
+                const idx = try self.evaluateExpression(index.index);
+
+                if (array != .array) return RuntimeError.TypeError;
+                if (idx != .number) return RuntimeError.TypeError;
+
+                const i = @as(usize, @intFromFloat(idx.number));
+                if (i >= array.array.items.len) return RuntimeError.IndexOutOfBounds;
+
+                return try array.array.items[i].clone(self.allocator);
+            },
+
+            .FanumSlice => |slice| {
+                const array = try self.evaluateExpression(slice.array);
+                const start = try self.evaluateExpression(slice.start);
+                const end = try self.evaluateExpression(slice.end);
+
+                if (array != .array) return RuntimeError.TypeError;
+                if (start != .number or end != .number) return RuntimeError.TypeError;
+
+                const start_idx = @as(usize, @intFromFloat(start.number));
+                const end_idx = @as(usize, @intFromFloat(end.number));
+
+                if (start_idx > end_idx or end_idx > array.array.items.len) {
+                    return RuntimeError.IndexOutOfBounds;
+                }
+
+                var new_array = std.ArrayList(Value).init(self.allocator);
+                var i = start_idx;
+                while (i < end_idx) : (i += 1) {
+                    try new_array.append(try array.array.items[i].clone(self.allocator));
+                }
+
+                return Value{ .array = new_array };
+            },
+
+            .Call => |call| {
+                const callee = try self.evaluateExpression(call.callee);
+                if (callee != .function) return RuntimeError.TypeError;
+
+                var args = std.ArrayList(Value).init(self.allocator);
+                defer args.deinit();
+
+                for (call.arguments.items) |arg| {
+                    const value = try self.evaluateExpression(arg);
+                    try args.append(try value.clone(self.allocator));
+                }
+
+                return try self.executeFunction(callee.function, args);
+            },
+
             else => @panic("Unimplemented expression type"),
         }
     }
@@ -303,4 +410,53 @@ pub const Interpreter = struct {
             else => return RuntimeError.InvalidOperand,
         }
     }
+
+    fn isTruthy(self: *Interpreter, value: Value) !bool {
+        _ = self;
+        return switch (value) {
+            .boolean => |b| b,
+            .null => false,
+            .number => |n| n != 0,
+            .string => |s| s.len > 0,
+            .array => |arr| arr.items.len > 0,
+            else => true,
+        };
+    }
+
+    fn executeFunction(self: *Interpreter, func: Function, args: std.ArrayList(Value)) !Value {
+        var environment = Environment.init(self.allocator, func.closure);
+        defer environment.deinit();
+
+        // Bind parameters to arguments
+        for (func.params.items, 0..) |param, i| {
+            if (i < args.items.len) {
+                try environment.define(param.lexeme, args.items[i]);
+            } else {
+                try environment.define(param.lexeme, Value{ .null = {} });
+            }
+        }
+
+        // Execute function body in new environment
+        const previous = self.environment;
+        self.environment = &environment;
+        defer self.environment = previous;
+
+        self.executeStatement(func.body) catch |err| {
+            if (err == RuntimeError.ReturnValue) {
+                // Handle return value
+                return Value{ .null = {} }; // TODO: Implement proper return value handling
+            }
+            return err;
+        };
+
+        return Value{ .null = {} };
+    }
+};
+
+pub const Function = struct {
+    type: Parser.FunctionType,
+    name: Token,
+    params: std.ArrayList(Token),
+    body: *Stmt,
+    closure: *Environment,
 };
