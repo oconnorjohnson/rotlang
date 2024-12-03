@@ -18,6 +18,8 @@ pub const RuntimeError = error{
     IndexOutOfBounds,
     InvalidErrorValue,
     ErrorPropagation,
+    AccessViolation,
+    InvalidVisibility,
 };
 
 pub const ErrorValue = struct {
@@ -46,14 +48,36 @@ pub const Qualifier = enum {
     None, // Default qualifier
 };
 
+pub const Visibility = enum {
+    Lowkey, // Private to current scope
+    Highkey, // Public/visible to outer scopes
+    Default, // Default visibility (Highkey)
+};
+
+pub const ScopeType = enum {
+    Global,
+    Local,
+    Function,
+};
+
 pub const QualifiedValue = struct {
     value: Value,
     qualifier: Qualifier,
+    visibility: Visibility,
 
     pub fn init(value: Value, qualifier: Qualifier) QualifiedValue {
         return .{
             .value = value,
             .qualifier = qualifier,
+            .visibility = .Default,
+        };
+    }
+
+    pub fn initWithVisibility(value: Value, qualifier: Qualifier, visibility: Visibility) QualifiedValue {
+        return .{
+            .value = value,
+            .qualifier = qualifier,
+            .visibility = visibility,
         };
     }
 
@@ -65,6 +89,7 @@ pub const QualifiedValue = struct {
         return QualifiedValue{
             .value = try self.value.clone(allocator),
             .qualifier = self.qualifier,
+            .visibility = self.visibility,
         };
     }
 };
@@ -165,12 +190,14 @@ pub const Environment = struct {
     values: std.StringHashMap(QualifiedValue),
     enclosing: ?*Environment,
     allocator: std.mem.Allocator,
+    scope_type: ScopeType,
 
     pub fn init(allocator: std.mem.Allocator, enclosing: ?*Environment) Environment {
         return .{
             .values = std.StringHashMap(QualifiedValue).init(allocator),
             .enclosing = enclosing,
             .allocator = allocator,
+            .scope_type = if (enclosing == null) .Global else .Local,
         };
     }
 
@@ -187,28 +214,49 @@ pub const Environment = struct {
         // Validate qualifier
         try value.value.validateQualifier(value.qualifier);
 
+        // Check for visibility conflicts
+        if (self.scope_type == .Global and value.visibility == .Lowkey) {
+            return RuntimeError.InvalidVisibility;
+        }
+
         // If we're redefining a variable, clean up the old value first
         if (self.values.getPtr(name)) |old_value| {
+            // Check if we can redefine based on visibility
+            if (old_value.visibility == .Lowkey and self.scope_type != .Function) {
+                return RuntimeError.AccessViolation;
+            }
             old_value.deinit();
         }
+
         const cloned_value = try value.clone(self.allocator);
         try self.values.put(name, cloned_value);
     }
 
-    pub fn get(self: *Environment, name: Token) !Value {
+    pub fn get(self: *Environment, name: Token) !QualifiedValue {
         if (self.values.get(name.lexeme)) |value| {
             return value.clone(self.allocator);
         }
 
         if (self.enclosing) |enclosing| {
+            // Check if we can access the variable from the enclosing scope
+            if (enclosing.values.get(name.lexeme)) |value| {
+                if (value.visibility == .Lowkey and self.scope_type != .Function) {
+                    return RuntimeError.AccessViolation;
+                }
+                return value.clone(self.allocator);
+            }
             return enclosing.get(name);
         }
 
         return RuntimeError.UndefinedVariable;
     }
 
-    pub fn assign(self: *Environment, name: Token, value: Value) !void {
+    pub fn assign(self: *Environment, name: Token, value: QualifiedValue) !void {
         if (self.values.getPtr(name.lexeme)) |old_value| {
+            // Check visibility before assignment
+            if (old_value.visibility == .Lowkey and self.scope_type != .Function) {
+                return RuntimeError.AccessViolation;
+            }
             old_value.deinit();
             try self.values.put(name.lexeme, try value.clone(self.allocator));
             return;
@@ -285,11 +333,15 @@ pub const Interpreter = struct {
                 _ = try self.evaluateExpression(expr_stmt.expr);
             },
             .Declaration => |decl| {
-                var value: Value = .{ .null = {} };
+                var value = Value{ .null = {} };
                 if (decl.initializer) |initializer| {
-                    value = try self.evaluateExpression(initializer);
+                    const evaluated = try self.evaluateExpression(initializer);
+                    value = evaluated.value;
                 }
-                try self.environment.define(decl.name.lexeme, value);
+
+                const qualified_value = QualifiedValue.initWithVisibility(value, value.getDefaultQualifier(), decl.visibility);
+
+                try self.environment.define(decl.name.lexeme, qualified_value);
             },
             .Block => |block| {
                 var new_env = Environment.init(self.allocator, self.environment);
