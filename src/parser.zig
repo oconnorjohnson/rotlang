@@ -87,4 +87,16 @@ pub const Parser = struct {
             .had_error = false,
         };
     }
+
+    pub fn parse(self: *Parser) !std.ArrayList(Stmt) {
+        var statements = std.ArrayList(Stmt).init(self.allocator);
+
+        while (!self.isAtEnd()) {
+            if (try self.declaration()) |stmt| {
+                try statements.append(stmt);
+            }
+        }
+
+        return statements;
+    }
 };
