@@ -148,4 +148,30 @@ pub const Parser = struct {
 
         return Stmt{ .Block = .{ .statements = statements } };
     }
+
+    fn ifStatement(self: *Parser) !Stmt {
+        _ = try self.consume(.LeftParen, "Expected '(' after 'no shot'");
+        const condition = try self.expression();
+        _ = try self.consume(.RightParen, "Expected ')' after condition");
+
+        const then_branch = try self.allocator.create(Stmt);
+        then_branch.* = try self.statement();
+
+        var else_branch: ?*Stmt = null;
+        if (self.match(.AintNoWay)) {
+            const else_stmt = try self.allocator.create(Stmt);
+            else_stmt.* = try self.statement();
+            else_branch = else_stmt;
+        }
+
+        return Stmt{
+            .If = .{
+                .condition = condition,
+                .then_branch = then_branch,
+                .else_branch = else_branch,
+            },
+        };
+    }
+
+    // helper methods
 };
