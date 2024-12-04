@@ -964,6 +964,19 @@ pub const StandardLib = struct {
             else => RuntimeError.TypeError,
         };
     }
+
+    fn basedBool(args: []Value) !Value {
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+
+        return Value{ .boolean = switch (args[0]) {
+            .boolean => |b| b,
+            .number => |n| n != 0,
+            .string => |s| s.len > 0,
+            .null => false,
+            .array => |arr| arr.items.len > 0,
+            else => true,
+        } };
+    }
 };
 
 pub fn init(allocator: std.mem.Allocator) !Interpreter {
