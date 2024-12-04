@@ -857,6 +857,17 @@ pub const StandardLib = struct {
         try env.define("bussin", createNativeFunction("bussin", bussinPush));
         try env.define("bruh", createNativeFunction("bruh", bruhPop));
         try env.define("rizzler", createNativeFunction("rizzler", rizzlerLength));
+        try env.define("gyat", createNativeFunction("gyat", gyatSort));
+
+        // type converesion
+        try env.define("skibidi", createNativeFunction("skibidi", skibidiStr));
+        try env.define("sigma", createNativeFunction("sigma", sigmaNum));
+        try env.define("based", createNativeFunction("based", basedBool));
+
+        // math utils
+        try env.define("peak", createNativeFunction("peak", peakMax));
+        try env.define("mid", createNativeFunction("mid", midMin));
+        try env.define("clean", createNativeFunction("clean", cleanAbs));
     }
 
     fn createNativeFunction(name: []const u8, func: fn ([]Value) Value) QualifiedValue {
@@ -887,4 +898,19 @@ pub const StandardLib = struct {
         }
         return Value{ .null = {} };
     }
+
+    // implement other std lib functions
 };
+
+pub fn init(allocator: std.mem.Allocator) !Interpreter {
+    const global_env = try allocator.create(Environment);
+    global_env.* = Environment.init(allocator, null);
+
+    // init std lib
+    try StandardLib.initializeStdLib(global_env);
+
+    return Interpreter{
+        .environment = global_env,
+        .allocator = allocator,
+    };
+}
