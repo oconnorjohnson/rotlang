@@ -822,9 +822,10 @@ pub const Function = struct {
     type: Parser.FunctionType,
     name: Token,
     params: std.ArrayList(Token),
-    body: *Stmt,
+    body: ?*Stmt,
     closure: *Environment,
     behavior: FunctionBehavior,
+    native_fn: ?fn ([]Value) Value,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -848,38 +849,47 @@ pub const Function = struct {
 
 pub const StandardLib = struct {
     pub fn initializeStdLib(env: *Environment) !void {
-        //initialize basic i/o functions
-        try env.define("yeet", createNativeFunction("yeet", yeetPrint));
-        try env.define("sheesh", createNativeFunction("sheesh", sheeshPrint));
-        try env.define("clutch", createNativeFunction("clutch", clutchInput));
+        const allocator = env.allocator;
 
-        // initialize array utils
-        try env.define("bussin", createNativeFunction("bussin", bussinPush));
-        try env.define("bruh", createNativeFunction("bruh", bruhPop));
-        try env.define("rizzler", createNativeFunction("rizzler", rizzlerLength));
-        try env.define("gyat", createNativeFunction("gyat", gyatSort));
+        // Basic I/O functions
+        try env.define("yeet", try createNativeFunction(allocator, "yeet", yeetPrint));
+        try env.define("sheesh", try createNativeFunction(allocator, "sheesh", sheeshPrint));
+        try env.define("clutch", try createNativeFunction(allocator, "clutch", clutchInput));
 
-        // type converesion
-        try env.define("skibidi", createNativeFunction("skibidi", skibidiStr));
-        try env.define("sigma", createNativeFunction("sigma", sigmaNum));
-        try env.define("based", createNativeFunction("based", basedBool));
+        // Array utilities
+        try env.define("bussin", try createNativeFunction(allocator, "bussin", bussinPush));
+        try env.define("bruh", try createNativeFunction(allocator, "bruh", bruhPop));
+        try env.define("rizzler", try createNativeFunction(allocator, "rizzler", rizzlerLength));
+        try env.define("gyat", try createNativeFunction(allocator, "gyat", gyatSort));
 
-        // math utils
-        try env.define("peak", createNativeFunction("peak", peakMax));
-        try env.define("mid", createNativeFunction("mid", midMin));
-        try env.define("clean", createNativeFunction("clean", cleanAbs));
+        // Type conversion
+        try env.define("skibidi", try createNativeFunction(allocator, "skibidi", skibidiStr));
+        try env.define("sigma", try createNativeFunction(allocator, "sigma", sigmaNum));
+        try env.define("based", try createNativeFunction(allocator, "based", basedBool));
+
+        // Math utilities
+        try env.define("peak", try createNativeFunction(allocator, "peak", peakMax));
+        try env.define("mid", try createNativeFunction(allocator, "mid", midMin));
+        try env.define("clean", try createNativeFunction(allocator, "clean", cleanAbs));
     }
 
-    fn createNativeFunction(name: []const u8, func: fn ([]Value) Value) QualifiedValue {
+    fn createNativeFunction(
+        allocator: std.mem.Allocator,
+        name: []const u8,
+        func: fn ([]Value) Value,
+    ) !QualifiedValue {
         return QualifiedValue.init(
-            Value{ .function = Function.init(
-                allocator,
-                Token{ .type = .Identifier, .lexeme = name, .line = 0 },
-                std.ArrayList(Token).init(allocator),
-                undefine,
-                null,
-                .Sigma,
-            ) },
+            Value{
+                .function = Function.init(
+                    allocator,
+                    Token{ .type = .Identifier, .lexeme = name, .line = 0 },
+                    std.ArrayList(Token).init(allocator),
+                    null, // No body for native functions
+                    null,
+                    .Sigma,
+                    func, // Store the function pointer
+                ),
+            },
             .Clean,
         );
     }
@@ -997,7 +1007,7 @@ pub const StandardLib = struct {
         if (args.len < 1) return RuntimeError.InvalidOperand;
         if (args[0] != .number) return RuntimeError.TypeError;
 
-        return Value{ .number = @fabs(args[0].number) };
+        return Value{ .number = std.math.fabs(args[0].number) };
     }
 
     // helper function for array sorting
@@ -1022,7 +1032,7 @@ pub const StandardLib = struct {
     }
 
     // input function implementation
-    fn clutchInput(args: []Value) !Value {
+    fn clutchInput() !Value {
         const allocator = std.heap.page_allocator;
         var buffer: [1024]u8 = undefined;
 
