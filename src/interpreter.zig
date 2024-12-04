@@ -715,14 +715,6 @@ pub const Interpreter = struct {
     }
 };
 
-pub const Function = struct {
-    type: Parser.FunctionType,
-    name: Token,
-    params: std.ArrayList(Token),
-    body: *Stmt,
-    closure: *Environment,
-};
-
 pub const IteratorType = enum {
     Array,
     Range,
@@ -814,5 +806,42 @@ pub const Iterator = struct {
                 // No cleanup needed for range iterators
             },
         }
+    }
+};
+
+pub const FunctionBehavior = enum {
+    Sigma, // reg function
+    Bussin, // entry point function
+    Hitting, // method function
+    Tweaking, // modifier function
+    Vibing, // async function
+    Mewing, // generator function
+};
+
+pub const Function = struct {
+    type: Parser.FunctionType,
+    name: Token,
+    params: std.ArrayList(Token),
+    body: *Stmt,
+    closure: *Environment,
+    behavior: FunctionBehavior,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        name: Token,
+        params: std.ArrayList(Token),
+        body: *Stmt,
+        closure: *Environment,
+        behavior: FunctionBehavior,
+    ) Function {
+        return .{
+            .type = .Function,
+            .allocator = allocator,
+            .name = name,
+            .params = params,
+            .body = body,
+            .closure = closure,
+            .behavior = behavior,
+        };
     }
 };
