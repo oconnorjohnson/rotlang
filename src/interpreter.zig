@@ -977,6 +977,21 @@ pub const StandardLib = struct {
             else => true,
         } };
     }
+
+    // math utils
+    fn peakMax(args: []Value) !Value {
+        if (args.len < 2) return RuntimeError.InvalidOperand;
+        if (args[0] != .number or args[1] != .number) return RuntimeError.TypeError;
+
+        return Value{ .number = @max(args[0].number, args[1].number) };
+    }
+
+    fn midMin(args: []Value) !Value {
+        if (args.len < 2) return RuntimeError.InvalidOperand;
+        if (args[0] != .number or args[1] != .number) return RuntimeError.TypeError;
+
+        return Value{ .number = @min(args[0].number, args[1].number) };
+    }
 };
 
 pub fn init(allocator: std.mem.Allocator) !Interpreter {
