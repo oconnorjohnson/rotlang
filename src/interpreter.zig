@@ -311,15 +311,29 @@ pub const Environment = struct {
 pub const Interpreter = struct {
     environment: *Environment,
     allocator: std.mem.Allocator,
+    debug_info: *DebugInfo,
 
     pub fn init(allocator: std.mem.Allocator) !Interpreter {
         const global_env = try allocator.create(Environment);
         global_env.* = Environment.init(allocator, null);
 
+        // Initialize debug info
+        const debug_info = try DebugInfo.init(allocator, "main.rot");
+
+        // Initialize standard library
+        try StandardLib.initializeStdLib(global_env);
+
         return Interpreter{
             .environment = global_env,
             .allocator = allocator,
+            .debug_info = debug_info,
         };
+    }
+
+    pub fn debugPrint(self: *Interpreter, value: Value) !void {
+        const debug_str = try self.debug_info.inspectValue(value);
+        defer self.allocator.free(debug_str);
+        std.debug.print("{s}\n", .{debug_str});
     }
 
     pub fn deinit(self: *Interpreter) void {
@@ -334,6 +348,17 @@ pub const Interpreter = struct {
     }
 
     fn executeStatement(self: *Interpreter, stmt: *const Stmt) !void {
+        // Update debug info with statement location
+        self.debug_info.updateLocation(stmt.line, stmt.column);
+
+        // Push scope for debugging
+        try self.debug_info.pushScope(try std.fmt.allocPrint(
+            self.allocator,
+            "statement at line {d}",
+            .{stmt.line},
+        ));
+        defer self.debug_info.popScope();
+
         switch (stmt.*) {
             .Expression => |expr_stmt| {
                 _ = try self.evaluateExpression(expr_stmt.expr);
@@ -371,7 +396,6 @@ pub const Interpreter = struct {
                     try self.executeStatement(else_branch);
                 }
             },
-
             .While => |while_stmt| {
                 while (true) {
                     const condition = try self.evaluateExpression(while_stmt.condition);
@@ -387,41 +411,40 @@ pub const Interpreter = struct {
                     };
                 }
             },
-
             .Function => |func| {
-                // Create function value and store in environment
                 const function = Value{ .function = .{
                     .type = func.type,
                     .name = func.name,
                     .params = func.params,
                     .body = func.body,
                     .closure = self.environment,
+                    .behavior = func.behavior,
+                    .native_fn = null,
+                    .is_async = func.behavior == .Vibing,
+                    .generator_state = null,
+                    .instance_context = null,
+                    .modifier_target = null,
                 } };
-                try self.environment.define(func.name.lexeme, function);
+                try self.environment.define(func.name.lexeme, QualifiedValue.init(function, .Clean));
             },
-
             .Return => |ret| {
                 var value = Value{ .null = {} };
                 if (ret.value) |expr| {
-                    value = try self.evaluateExpression(expr);
+                    const evaluated = try self.evaluateExpression(expr);
+                    value = evaluated.value;
                 }
                 return RuntimeError.ReturnValue;
             },
-
             .Try => |try_stmt| {
-                // Create new environment for try block
                 var try_env = Environment.init(self.allocator, self.environment);
                 defer try_env.deinit();
 
                 const previous = self.environment;
                 self.environment = &try_env;
 
-                // Execute try block and catch any errors
                 self.executeStatement(try_stmt.body) catch |err| {
-                    // Restore environment
                     self.environment = previous;
 
-                    // Handle the error in catch block
                     if (try_stmt.catch_clause) |catch_clause| {
                         var catch_env = Environment.init(self.allocator, self.environment);
                         defer catch_env.deinit();
@@ -429,30 +452,22 @@ pub const Interpreter = struct {
                         self.environment = &catch_env;
                         defer self.environment = previous;
 
-                        // Create error value and bind it to error variable
                         const error_value = try ErrorValue.init(self.allocator, @errorName(err), catch_clause.error_var.line);
-                        try self.environment.define(catch_clause.error_var.lexeme, Value{ .error_value = error_value });
+                        try self.environment.define(catch_clause.error_var.lexeme, QualifiedValue.init(Value{ .error_value = error_value }, .Clean));
 
-                        // Execute catch block
                         try self.executeStatement(catch_clause.body);
                         return;
                     }
 
-                    // If no catch clause, propagate the error
                     return err;
                 };
 
-                // Restore environment after successful try block
                 self.environment = previous;
             },
-
             .Catch => |_| {
-                // Catch statements should only be executed through Try statements
                 return RuntimeError.InvalidErrorValue;
             },
-
             .Griddy => |griddy| {
-                // Create a new scope for the loop
                 var loop_env = Environment.init(self.allocator, self.environment);
                 defer loop_env.deinit();
 
@@ -460,20 +475,15 @@ pub const Interpreter = struct {
                 self.environment = &loop_env;
                 defer self.environment = previous;
 
-                // Evaluate the iterator expression
                 const iterator_value = try self.evaluateExpression(griddy.iterator);
                 var iterator = try Iterator.init(self.allocator, iterator_value.value);
                 defer iterator.deinit();
 
-                // Execute the loop
                 while (true) {
                     const next_value = try iterator.next() orelse break;
-
-                    // Define the loop variable in the current scope
                     const loop_var = QualifiedValue.init(next_value, .Clean);
                     try self.environment.define(griddy.variable.lexeme, loop_var);
 
-                    // Execute the loop body
                     self.executeStatement(griddy.body) catch |err| {
                         switch (err) {
                             RuntimeError.Break => break,
@@ -483,12 +493,28 @@ pub const Interpreter = struct {
                     };
                 }
             },
-
-            else => @panic("Unimplemented statement type"),
+            else => {
+                const err_msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "Unimplemented statement type: {s}",
+                    .{@tagName(std.meta.activeTag(stmt.*))},
+                );
+                defer self.allocator.free(err_msg);
+                try self.debug_info.pushScope(err_msg);
+                return RuntimeError.Custom;
+            },
         }
     }
 
     fn evaluateExpression(self: *Interpreter, expr: *const Expr) !QualifiedValue {
+        self.debug_info.updateLocation(expr.line, expr.column);
+
+        try self.debug_info.pushScope(try std.fmt.allocPrint(
+            self.allocator,
+            "expression at line {d}",
+            .{expr.line},
+        ));
+        defer self.debug_info.popScope();
         switch (expr.*) {
             .Literal => |lit| {
                 const value = switch (lit.value.type) {
