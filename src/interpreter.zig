@@ -20,6 +20,11 @@ pub const RuntimeError = error{
     ErrorPropagation,
     AccessViolation,
     InvalidVisibility,
+    AsyncNotAwaited,
+    GeneratorExhausted,
+    InvalidMethodCall,
+    InvalidModifier,
+    NotAnEntryPoint,
 };
 
 pub const ErrorValue = struct {
@@ -662,32 +667,61 @@ pub const Interpreter = struct {
     }
 
     fn executeFunction(self: *Interpreter, func: Function, args: std.ArrayList(Value)) !Value {
+        // Handle native functions first
+        if (func.native_fn) |native_fn| {
+            return native_fn(args.items);
+        }
+
+        // Check for valid entry point
+        if (func.isEntryPoint() and !self.is_program_start) {
+            return RuntimeError.NotAnEntryPoint;
+        }
+
+        // Handle different function behaviors
+        switch (func.behavior) {
+            .Sigma => return try self.executeRegularFunction(func, args),
+            .Bussin => return try self.executeEntryPoint(func, args),
+            .Hitting => return try self.executeMethodFunction(func, args),
+            .Tweaking => return try self.executeModifierFunction(func, args),
+            .Vibing => return try self.executeAsyncFunction(func, args),
+            .Mewing => return try self.executeGeneratorFunction(func, args),
+        }
+    }
+
+    fn executeRegularFunction(self: *Interpreter, func: Function, args: std.ArrayList(Value)) !Value {
         var environment = Environment.init(self.allocator, func.closure);
         defer environment.deinit();
 
-        // Bind parameters to arguments
-        for (func.params.items, 0..) |param, i| {
-            if (i < args.items.len) {
-                try environment.define(param.lexeme, args.items[i]);
-            } else {
-                try environment.define(param.lexeme, Value{ .null = {} });
-            }
-        }
+        try self.bindParameters(&environment, func.params, args);
 
-        // Execute function body in new environment
         const previous = self.environment;
         self.environment = &environment;
         defer self.environment = previous;
 
-        self.executeStatement(func.body) catch |err| {
-            if (err == RuntimeError.ReturnValue) {
-                // Handle return value
-                return Value{ .null = {} }; // TODO: Implement proper return value handling
-            }
-            return err;
-        };
+        if (func.body) |body| {
+            try self.executeStatement(body);
+        }
 
         return Value{ .null = {} };
+    }
+
+    fn executeEntryPoint(self: *Interpreter, func: Function, args: std.ArrayList(Value)) !Value {
+        self.is_program_start = true;
+        defer self.is_program_start = false;
+        return self.executeRegularFunction(func, args);
+    }
+
+    fn executeMethodFunction(self: *Interpreter, func: Function, args: std.ArrayList(Value)) !Value {
+        if (func.instance_context == null) {
+            return RuntimeError.InvalidMethodCall;
+        }
+
+        var environment = Environment.innit(self.allocator, func.closure);
+        defer environment.deinit();
+
+        try environment.define("this", func.instance_context.?.*);
+
+        return self.executeRegularFunction(func, args);
     }
 
     fn createErrorValue(self: *Interpreter, message: []const u8, line: usize) !Value {
@@ -818,6 +852,22 @@ pub const FunctionBehavior = enum {
     Mewing, // generator function
 };
 
+pub const GeneratorState = struct {
+    current_value: Value,
+    is_done: bool,
+    context: *Environment,
+    next_stmt_index: usize,
+
+    pub fn init(context: *Environment) GeneratorState {
+        return .{
+            .current_value = Value{ .null = {} },
+            .is_done = false,
+            .context = context,
+            .next_stmt_index = 0,
+        };
+    }
+};
+
 pub const Function = struct {
     type: Parser.FunctionType,
     name: Token,
@@ -826,6 +876,10 @@ pub const Function = struct {
     closure: *Environment,
     behavior: FunctionBehavior,
     native_fn: ?fn ([]Value) Value,
+    is_async: bool,
+    generator_state: ?*GeneratorState,
+    instance_context: ?*Value,
+    modifier_target: ?*Value,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -834,6 +888,7 @@ pub const Function = struct {
         body: *Stmt,
         closure: *Environment,
         behavior: FunctionBehavior,
+        native_fn: ?fn ([]Value) Value,
     ) Function {
         return .{
             .type = .Function,
@@ -843,7 +898,16 @@ pub const Function = struct {
             .body = body,
             .closure = closure,
             .behavior = behavior,
+            .native_fn = native_fn,
+            .is_async = behavior == .Vibing,
+            .generator_state = null,
+            .instance_context = null,
+            .modifier_target = null,
         };
+    }
+
+    pub fn isEntryPoint(self: Function) bool {
+        return self.behavior == .Bussin;
     }
 };
 
@@ -944,7 +1008,7 @@ pub const StandardLib = struct {
         if (args[0] != .array) return RuntimeError.TypeError;
 
         var array = args[0].array;
-        try sortArray(&array);
+        try gyatHelper(&array);
         return Value{ .array = array };
     }
 
@@ -1011,7 +1075,7 @@ pub const StandardLib = struct {
     }
 
     // helper function for array sorting
-    fn sortArray(array: *std.ArrayList(Value)) !void {
+    fn gyatHelper(array: *std.ArrayList(Value)) !void {
         const Context = struct {
             pub fn lessThan(_: @This(), a: Value, b: Value) bool {
                 return switch (a) {
