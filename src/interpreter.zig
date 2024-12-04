@@ -899,7 +899,37 @@ pub const StandardLib = struct {
         return Value{ .null = {} };
     }
 
-    // implement other std lib functions
+    fn bussinPush(args: []Value) !Value {
+        if (args.len < 2) return RuntimeError.InvalidOperand;
+        if (args[0] != .array) return RuntimeError.TypeError;
+
+        var array = args[0].array;
+        try array.append(try args[1].clone(array.allocator));
+        return Value{ .array = array };
+    }
+
+    fn bruhPop(args: []Value) !Value {
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+        if (args[0] != .array) return RuntimeError.TypeError;
+
+        var array = args[0].array;
+        if (array.items.len == 0) return RuntimeError.IndexOutOfBounds;
+
+        const popped = try array.pop().clone(array.allocator);
+        return popped;
+    }
+
+    fn rizzlerLength(args; []Value) !Value { 
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+
+        return switch (args[0]) { 
+            .array => |arr| Value{ .number = @floatFromInt(arr.items.len) },
+            .string => |str| Value{ .number = @floatFromInt(str.len) },
+            else => RuntimeError.TypeError,
+        };
+    }
+
+    
 };
 
 pub fn init(allocator: std.mem.Allocator) !Interpreter {
