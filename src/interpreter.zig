@@ -845,3 +845,31 @@ pub const Function = struct {
         };
     }
 };
+
+pub const StandardLib = struct {
+    pub fn initializeStdLib(env: *Environment) !void {
+        //initialize basic i/o functions
+        try env.define("yeet", createNativeFunction("yeet", yeetPrint));
+        try env.define("sheesh", createNativeFunction("sheesh", sheeshPrint));
+        try env.define("clutch", createNativeFunction("clutch", clutchInput));
+
+        // initialize array utils
+        try env.define("bussin", createNativeFunction("bussin", bussinPush));
+        try env.define("bruh", createNativeFunction("bruh", bruhPop));
+        try env.define("rizzler", createNativeFunction("rizzler", rizzlerLength));
+    }
+
+    fn createNativeFunction(name: []const u8, func: fn ([]Value) Value) QualifiedValue {
+        return QualifiedValue.init(
+            Value{ .function = Function.init(
+                allocator,
+                Token{ .type = .Identifier, .lexeme = name, .line = 0 },
+                std.ArrayList(Token).init(allocator),
+                undefine,
+                null,
+                .Sigma,
+            ) },
+            .Clean,
+        );
+    }
+};
