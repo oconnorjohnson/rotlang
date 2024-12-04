@@ -372,7 +372,9 @@ pub const Interpreter = struct {
 
                 const qualified_value = QualifiedValue.initWithVisibility(value, value.getDefaultQualifier(), decl.visibility);
 
-                try self.environment.define(decl.name.lexeme, qualified_value);
+                self.environment.define(decl.name.lexeme, qualified_value) catch |err| {
+                    return self.handleRuntimeError(err, "Error defining variable");
+                };
             },
             .Block => |block| {
                 var new_env = Environment.init(self.allocator, self.environment);
@@ -506,6 +508,13 @@ pub const Interpreter = struct {
         }
     }
 
+    fn handleRuntimeError(self: *Interpreter, err: RuntimeError, msg: []const u8) !void {
+        const error_msg = try self.debug_info.formatError(msg);
+        defer self.allocator.free(error_msg);
+        std.debug.print("{s}\n", .{error_msg});
+        return err;
+    }
+
     fn evaluateExpression(self: *Interpreter, expr: *const Expr) !QualifiedValue {
         self.debug_info.updateLocation(expr.line, expr.column);
 
@@ -528,18 +537,24 @@ pub const Interpreter = struct {
                 const left = try self.evaluateExpression(bin.left);
                 const right = try self.evaluateExpression(bin.right);
 
-                return try self.evaluateBinaryOp(left, bin.operator, right);
+                return self.evaluateBinaryOp(left, bin.operator, right) catch |err| {
+                    return self.handleRuntimeError(err, "Error in binary operation");
+                };
             },
             .Unary => |un| {
                 const right = try self.evaluateExpression(un.right);
-                return try self.evaluateUnaryOp(un.operator, right);
+                return self.evaluateUnaryOp(un.operator, right) catch |err| {
+                    return self.handleRuntimeError(err, "Error in unary operation");
+                };
             },
             .Variable => |var_expr| {
                 return try self.environment.get(var_expr.name);
             },
             .Assignment => |assign| {
                 const value = try self.evaluateExpression(assign.value);
-                try self.environment.assign(assign.name, value);
+                self.environment.assign(assign.name, value) catch |err| {
+                    return self.handleRuntimeError(err, "Error in assignment");
+                };
                 return value;
             },
             .Array => |array| {
@@ -555,11 +570,17 @@ pub const Interpreter = struct {
                 const array = try self.evaluateExpression(index.array);
                 const idx = try self.evaluateExpression(index.index);
 
-                if (array != .array) return RuntimeError.TypeError;
-                if (idx != .number) return RuntimeError.TypeError;
+                if (array != .array) {
+                    return self.handleRuntimeError(RuntimeError.TypeError, "Can only index into arrays");
+                }
+                if (idx != .number) {
+                    return self.handleRuntimeError(RuntimeError.TypeError, "Array index must be a number");
+                }
 
                 const i = @as(usize, @intFromFloat(idx.number));
-                if (i >= array.array.items.len) return RuntimeError.IndexOutOfBounds;
+                if (i >= array.array.items.len) {
+                    return self.handleRuntimeError(RuntimeError.IndexOutOfBounds, "Array index out of bounds");
+                }
 
                 return try array.array.items[i].clone(self.allocator);
             },
@@ -591,12 +612,12 @@ pub const Interpreter = struct {
             .Call => |call| {
                 const callee = try self.evaluateExpression(call.callee);
 
-                // Check if we're calling an error value (error propagation)
                 if (callee == .error_value) {
-                    return RuntimeError.ErrorPropagation;
+                    return self.handleRuntimeError(RuntimeError.ErrorPropagation, "Error propagated through function call");
                 }
-
-                if (callee != .function) return RuntimeError.TypeError;
+                if (callee != .function) {
+                    return self.handleRuntimeError(RuntimeError.TypeError, "Can only call functions");
+                }
 
                 var args = std.ArrayList(Value).init(self.allocator);
                 defer args.deinit();
@@ -619,7 +640,15 @@ pub const Interpreter = struct {
 
     fn evaluateBinaryOp(self: *Interpreter, left: QualifiedValue, operator: Token, right: QualifiedValue) !QualifiedValue {
         const result_qualifier = combineQualifiers(left.qualifier, right.qualifier);
-        const result_value = try self.evaluateBinaryOpValues(left.value, operator, right.value);
+        const result_value = self.evaluateBinaryOpValues(left.value, operator, right.value) catch |err| {
+            const msg = try std.fmt.allocPrint(
+                self.allocator,
+                "Error in binary operation '{s}'",
+                .{operator.lexeme},
+            );
+            defer self.allocator.free(msg);
+            return self.handleRuntimeError(err, msg);
+        };
         return QualifiedValue.init(result_value, result_qualifier);
     }
 
@@ -704,12 +733,46 @@ pub const Interpreter = struct {
 
         // Handle different function behaviors
         switch (func.behavior) {
-            .Sigma => return try self.executeRegularFunction(func, args),
-            .Bussin => return try self.executeEntryPoint(func, args),
-            .Hitting => return try self.executeMethodFunction(func, args),
-            .Tweaking => return try self.executeModifierFunction(func, args),
-            .Vibing => return try self.executeAsyncFunction(func, args),
-            .Mewing => return try self.executeGeneratorFunction(func, args),
+            .Sigma => return self.executeRegularFunction(func, args) catch |err| {
+                return self.handleRuntimeError(err, "Error in regular function execution");
+            },
+            .Bussin => return self.executeEntryPoint(func, args) catch |err| {
+                return self.handleRuntimeError(err, "Error in entry point function execution");
+            },
+            .Hitting => {
+                if (func.instance_context == null) {
+                    return self.handleRuntimeError(RuntimeError.InvalidMethodCall, "Method called without instance context");
+                }
+                return self.executeMethodFunction(func, args) catch |err| {
+                    return self.handleRuntimeError(err, "Error in method execution");
+                };
+            },
+            .Tweaking => {
+                if (func.modifier_target == null) {
+                    return self.handleRuntimeError(RuntimeError.InvalidModifier, "Modifier function called without target");
+                }
+                return self.executeModifierFunction(func, args) catch |err| {
+                    return self.handleRuntimeError(err, "Error in modifier function execution");
+                };
+            },
+            .Vibing => {
+                if (!self.is_awaiting) {
+                    return self.handleRuntimeError(RuntimeError.AsyncNotAwaited, "Async function must be awaited");
+                }
+                return self.executeAsyncFunction(func, args) catch |err| {
+                    return self.handleRuntimeError(err, "Error in async function execution");
+                };
+            },
+            .Mewing => {
+                if (func.generator_state) |state| {
+                    if (state.is_done) {
+                        return self.handleRuntimeError(RuntimeError.GeneratorExhausted, "Generator has been exhausted");
+                    }
+                }
+                return self.executeGeneratorFunction(func, args) catch |err| {
+                    return self.handleRuntimeError(err, "Error in generator function execution");
+                };
+            },
         }
     }
 
