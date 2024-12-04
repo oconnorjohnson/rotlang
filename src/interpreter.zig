@@ -919,17 +919,17 @@ pub const StandardLib = struct {
         return popped;
     }
 
-    fn rizzlerLength(args; []Value) !Value { 
+    fn rizzlerLength(args: []Value) !Value {
         if (args.len < 1) return RuntimeError.InvalidOperand;
 
-        return switch (args[0]) { 
+        return switch (args[0]) {
             .array => |arr| Value{ .number = @floatFromInt(arr.items.len) },
             .string => |str| Value{ .number = @floatFromInt(str.len) },
             else => RuntimeError.TypeError,
         };
     }
 
-    fn gyatSort(args: []Value) !Value { 
+    fn gyatSort(args: []Value) !Value {
         if (args.len < 1) return RuntimeError.InvalidOperand;
         if (args[0] != .array) return RuntimeError.TypeError;
 
@@ -938,7 +938,21 @@ pub const StandardLib = struct {
         return Value{ .array = array };
     }
 
-    
+    // type conversion functions
+    fn skibidiStr(args: []Value) !Value {
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+
+        const allocator = args[0].getAllocator();
+        const str = switch (args[0]) {
+            .number => |n| try std.fmt.allocPrint(allocator, "{d}", .{n}),
+            .boolean => |b| try std.fmt.allocPrint(allocator, "{}", .{b}),
+            .string => |s| try allocator.dupe(u8, s),
+            .null => try allocator.dupe(u8, "null"),
+            else => return RuntimeError.TypeError,
+        };
+
+        return Value{ .string = str };
+    }
 };
 
 pub fn init(allocator: std.mem.Allocator) !Interpreter {
