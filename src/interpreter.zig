@@ -929,6 +929,15 @@ pub const StandardLib = struct {
         };
     }
 
+    fn gyatSort(args: []Value) !Value { 
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+        if (args[0] != .array) return RuntimeError.TypeError;
+
+        var array = args[0].array;
+        try sortArray(&array);
+        return Value{ .array = array };
+    }
+
     
 };
 
