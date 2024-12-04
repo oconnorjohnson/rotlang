@@ -953,6 +953,17 @@ pub const StandardLib = struct {
 
         return Value{ .string = str };
     }
+
+    fn sigmaNum(args: []Value) !Value {
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+
+        return switch (args[0]) {
+            .number => args[0],
+            .string => |s| Value{ .number = try std.fmt.parseFloat(f64, s) },
+            .boolean => |b| Value{ .number = if (b) 1 else 0 },
+            else => RuntimeError.TypeError,
+        };
+    }
 };
 
 pub fn init(allocator: std.mem.Allocator) !Interpreter {
