@@ -724,6 +724,66 @@ pub const Interpreter = struct {
         return self.executeRegularFunction(func, args);
     }
 
+    fn executeModifierFunction(self: *Interpreter, func: Function, args: std.ArrayList(Value)) !Value {
+        if (func.modifier_target == null) {
+            return RuntimeError.InvalidModifier;
+        }
+
+        const result = try self.executeRegularFunction(func, args);
+
+        func.modifier_target.?.* = result;
+
+        return result;
+    }
+
+    fn executeAsyncFunction(self: *Interpreter, func: Function, args: std.ArrayList(Value)) !Value {
+        // For now, we'll implement a simple async that just executes immediately
+        // In a real implementation, this would return a Promise or Future
+        if (!self.is_awaiting) {
+            return RuntimeError.AsyncNotAwaited;
+        }
+        return self.executeRegularFunction(func, args);
+    }
+
+    fn executeGeneratorFunction(self: *Interpreter, func: Function, args: std.ArrayList(Value)) !Value {
+        if (func.generator_state == null) {
+            // First call - initialize generator
+            const state = try self.allocator.create(GeneratorState);
+            state.* = GeneratorState.init(self.environment);
+            func.generator_state = state;
+        }
+
+        const state = func.generator_state.?;
+        if (state.is_done) {
+            return RuntimeError.GeneratorExhausted;
+        }
+
+        // Execute next iteration
+        const result = try self.executeNextGenerator(func, state, args);
+        return result;
+    }
+
+    fn executeNextGenerator(self: *Interpreter, func: Function, state: *GeneratorState, args: std.ArrayList(Value)) !Value {
+        var environment = Environment.init(self.allocator, func.closure);
+        defer environment.deinit();
+
+        // Restore generator context
+        try self.bindParameters(&environment, func.params, args);
+        const previous = self.environment;
+        self.environment = &environment;
+        defer self.environment = previous;
+
+        // Execute until next yield or end
+        if (func.body) |body| {
+            // Implementation would continue here with yield handling
+            _ = body;
+        }
+
+        // For now, just return null and mark as done
+        state.is_done = true;
+        return Value{ .null = {} };
+    }
+
     fn createErrorValue(self: *Interpreter, message: []const u8, line: usize) !Value {
         const error_value = try ErrorValue.init(self.allocator, message, line);
         return Value{ .error_value = error_value };
