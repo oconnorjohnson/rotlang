@@ -1032,7 +1032,7 @@ pub const StandardLib = struct {
     }
 
     // input function implementation
-    fn clutchInput() !Value {
+    fn clutchInput(comptime _: []Value) !Value {
         const allocator = std.heap.page_allocator;
         var buffer: [1024]u8 = undefined;
 
