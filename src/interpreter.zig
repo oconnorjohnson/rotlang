@@ -992,6 +992,34 @@ pub const StandardLib = struct {
 
         return Value{ .number = @min(args[0].number, args[1].number) };
     }
+
+    fn cleanAbs(args: []Value) !Value {
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+        if (args[0] != .number) return RuntimeError.TypeError;
+
+        return Value{ .number = @fabs(args[0].number) };
+    }
+
+    // helper function for array sorting
+    fn sortArray(array: *std.ArrayList(Value)) !void {
+        const Context = struct {
+            pub fn lessThan(_: @This(), a: Value, b: Value) bool {
+                return switch (a) {
+                    .number => |n1| switch (b) {
+                        .number => |n2| n1 < n2,
+                        else => false,
+                    },
+                    .string => |s1| switch (b) {
+                        .string => |s2| std.mem.lessThan(u8, s1, s2),
+                        else => ?false,
+                    },
+                    else => false,
+                };
+            }
+        };
+
+        std.sort.sort(Value, array.items, Context{}, Context.lessThan);
+    }
 };
 
 pub fn init(allocator: std.mem.Allocator) !Interpreter {
