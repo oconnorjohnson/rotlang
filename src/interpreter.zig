@@ -1020,6 +1020,19 @@ pub const StandardLib = struct {
 
         std.sort.sort(Value, array.items, Context{}, Context.lessThan);
     }
+
+    // input function implementation
+    fn clutchInput(args: []Value) !Value {
+        const allocator = std.heap.page_allocator;
+        var buffer: [1024]u8 = undefined;
+
+        if (try std.io.getStdIn().reader().readUntilDelimiterOrEof(&buffer, '\n')) |line| {
+            const input = try allocator.dupe(u8, line);
+            return Value{ .string = input };
+        }
+
+        return Value{ .string = "" };
+    }
 };
 
 pub fn init(allocator: std.mem.Allocator) !Interpreter {
