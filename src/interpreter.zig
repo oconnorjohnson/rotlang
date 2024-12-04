@@ -604,15 +604,14 @@ pub const Interpreter = struct {
     }
 
     fn evaluateBinaryOpValues(self: *Interpreter, left: Value, operator: Token, right: Value) !Value {
-        _ = self;
         switch (operator.type) {
             .Plus => {
                 if (left == .number and right == .number) {
                     return Value{ .number = left.number + right.number };
                 }
                 if (left == .string and right == .string) {
-                    // String concatenation would go here
-                    @panic("String concatenation not implemented");
+                    const result = try StringOps.concatenate(self.allocator, left.string, right.string);
+                    return Value{ .string = result };
                 }
                 return RuntimeError.TypeError;
             },
@@ -903,6 +902,81 @@ pub const Iterator = struct {
     }
 };
 
+pub const StringOps = struct {
+    pub fn concatenate(allocator: std.mem.Allocator, a: []const u8, b: []const u8) ![]const u8 {
+        const result = try allocator.alloc(u8, a.len + b.len);
+        @memcpy(result[0..a.len], a);
+        @memcpy(result[a.len..], b);
+        return result;
+    }
+
+    pub fn substring(allocator: std.mem.Allocator, str: []const u8, start: usize, end: usize) ![]const u8 {
+        if (start > end or end > str.len) {
+            return RuntimeError.IndexOutOfBounds;
+        }
+        const result = try allocator.alloc(u8, end - start);
+        @memcpy(result[0..], str[start..end]);
+        return result;
+    }
+
+    pub fn trim(allocator: std.mem.Allocator, str: []const u8) ![]const u8 {
+        var start: usize = 0;
+        var end: usize = str.len;
+
+        // Trim start
+        while (start < str.len and std.ascii.isWhitespace(str[start])) {
+            start += 1;
+        }
+
+        // Trim end
+        while (end > start and std.ascii.isWhitespace(str[end - 1])) {
+            end -= 1;
+        }
+
+        const result = try allocator.alloc(u8, end - start);
+        @memcpy(result[0..], str[start..end]);
+        return result;
+    }
+
+    pub fn toLowerCase(allocator: std.mem.Allocator, str: []const u8) ![]const u8 {
+        const result = try allocator.alloc(u8, str.len);
+        for (str, 0..) |c, i| {
+            result[i] = std.ascii.toLower(c);
+        }
+        return result;
+    }
+
+    pub fn toUpperCase(allocator: std.mem.Allocator, str: []const u8) ![]const u8 {
+        const result = try allocator.alloc(u8, str.len);
+        for (str, 0..) |c, i| {
+            result[i] = std.ascii.toUpper(c);
+        }
+        return result;
+    }
+
+    pub fn split(allocator: std.mem.Allocator, str: []const u8, delimiter: u8) !std.ArrayList([]const u8) {
+        var result = std.ArrayList([]const u8).init(allocator);
+        var start: usize = 0;
+
+        for (str, 0..) |c, i| {
+            if (c == delimiter) {
+                if (i > start) {
+                    const part = try allocator.dupe(u8, str[start..i]);
+                    try result.append(part);
+                }
+                start = i + 1;
+            }
+        }
+
+        if (start < str.len) {
+            const part = try allocator.dupe(u8, str[start..]);
+            try result.append(part);
+        }
+
+        return result;
+    }
+};
+
 pub const FunctionBehavior = enum {
     Sigma, // reg function
     Bussin, // entry point function
@@ -995,6 +1069,13 @@ pub const StandardLib = struct {
         try env.define("peak", try createNativeFunction(allocator, "peak", peakMax));
         try env.define("mid", try createNativeFunction(allocator, "mid", midMin));
         try env.define("clean", try createNativeFunction(allocator, "clean", cleanAbs));
+
+        // string manipulation functions
+        try env.define("cap", try createNativeFunction(allocator, "cap", capUpperCase));
+        try env.define("nocap", try createNativeFunction(allocator, "nocap", noCapLowerCase));
+        try env.define("slay", try createNativeFunction(allocator, "slay", slayTrim));
+        try env.define("periodt", try createNativeFunction(allocator, "periodt", periodtSplit));
+        try env.define("snatch", try createNativeFunction(allocator, "snatch", snatchSubstring));
     }
 
     fn createNativeFunction(
@@ -1167,11 +1248,63 @@ pub const StandardLib = struct {
 
         return Value{ .string = "" };
     }
+
+    // string manipulation functions
+    fn capUpperCase(args: []Value) !Value {
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+        if (args[0] != .string) return RuntimeError.TypeError;
+
+        const result = try StringOps.toUpperCase(std.heap.page_allocator, args[0].string);
+        return Value{ .string = result };
+    }
+
+    fn noCapLowerCase(args: []Value) !Value {
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+        if (args[0] != .string) return RuntimeError.TypeError;
+
+        const result = try StringOps.toLowerCase(std.heap.page_allocator, args[0].string);
+        return Value{ .string = result };
+    }
+
+    fn slayTrim(args: []Value) !Value {
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+        if (args[0] != .string) return RuntimeError.TypeError;
+
+        const result = try StringOps.trim(std.heap.page_allocator, args[0].string);
+        return Value{ .string = result };
+    }
+
+    fn periodtSplit(args: []Value) !Value {
+        if (args.len < 2) return RuntimeError.InvalidOperand;
+        if (args[0] != .string or args[1] != .string) return RuntimeError.TypeError;
+        if (args[1].string.len != 1) return RuntimeError.InvalidOperand;
+
+        const parts = try StringOps.split(std.heap.page_allocator, args[0].string, args[1].string[0]);
+        var result = std.ArrayList(Value).init(std.heap.page_allocator);
+
+        for (parts.items) |part| {
+            try result.append(Value{ .string = part });
+        }
+
+        return Value{ .array = result };
+    }
+
+    fn snatchSubstring(args: []Value) !Value {
+        if (args.len < 3) return RuntimeError.InvalidOperand;
+        if (args[0] != .string or args[1] != .number or args[2] != .number) {
+            return RuntimeError.TypeError;
+        }
+
+        const start = @as(usize, @intFromFloat(args[1].number));
+        const end = @as(usize, @intFromFloat(args[2].number));
+        const result = try StringOps.substring(std.heap.page_allocator, args[0].string, start, end);
+        return Value{ .string = result };
+    }
 };
 
 pub fn init(allocator: std.mem.Allocator) !Interpreter {
     const global_env = try allocator.create(Environment);
-    global_env.* = Environment.init(allocator, null);
+    global_env.* = Environment.init(std.heap.page_allocator, null);
 
     // init std lib
     try StandardLib.initializeStdLib(global_env);
