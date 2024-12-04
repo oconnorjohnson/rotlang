@@ -872,4 +872,19 @@ pub const StandardLib = struct {
             .Clean,
         );
     }
+
+    fn yeetPrint(args: []Value) Value {
+        for (args) |arg| {
+            std.debug.print("{}", .{arg});
+        }
+        std.debug.print("\n", .{});
+        return Value{ .null = {} };
+    }
+
+    fn sheeshPrint(args: []Value) Value {
+        for (args) |arg| {
+            std.debug.print("{}", .{arg});
+        }
+        return Value{ .null = {} };
+    }
 };
