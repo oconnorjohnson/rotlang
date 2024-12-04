@@ -1302,6 +1302,122 @@ pub const StandardLib = struct {
     }
 };
 
+pub const DebugInfo = struct {
+    line_number: usize,
+    column: usize,
+    file_name: []const u8,
+    scope_stack: std.ArrayList([]const u8),
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, file_name: []const u8) !*DebugInfo {
+        const debug_info = try allocator.create(DebugInfo);
+        debug_info.* = .{
+            .line_number = 0,
+            .column = 0,
+            .file_name = file_name,
+            .scope_stack = std.ArrayList([]const u8).init(allocator),
+            .allocator = allocator,
+        };
+        return debug_info;
+    }
+
+    pub fn deinit(self: *DebugInfo) void {
+        self.scope_stack.deinit();
+    }
+
+    pub fn pushScope(self: *DebugInfo, scope_name: []const u8) !void {
+        try self.scope_stack.append(try self.allocator.dupe(u8, scope_name));
+    }
+
+    pub fn popScope(self: *DebugInfo) void {
+        if (self.scope_stack.items.len > 0) {
+            const last = self.scope_stack.pop();
+            self.allocator.free(last);
+        }
+    }
+
+    pub fn updateLocation(self: *DebugInfo, line: usize, column: usize) void {
+        self.line_number = line;
+        self.column = column;
+    }
+
+    pub fn formatError(self: *DebugInfo, error_msg: []const u8) ![]const u8 {
+        return try std.fmt.allocPrint(
+            self.allocator,
+            \\Error: {s}
+            \\  at {s}:{d}:{d}
+            \\  in {s}
+            \\
+            \\Stack trace:
+            \\{s}
+        ,
+            .{
+                error_msg,
+                self.file_name,
+                self.line_number,
+                self.column,
+                if (self.scope_stack.items.len > 0) self.scope_stack.items[self.scope_stack.items.len - 1] else "global scope",
+                try self.generateStackTrace(),
+            },
+        );
+    }
+
+    pub fn generateStackTrace(self: *DebugInfo) ![]const u8 {
+        var trace = std.ArrayList(u8).init(self.allocator);
+        defer trace.deinit();
+
+        var writer = trace.writer();
+
+        var i: usize = self.scope_stack.items.len;
+        while (i > 0) {
+            i -= 1;
+            try writer.print("  at {s}\n", .{self.scope_stack.items[i]});
+        }
+
+        return try trace.toOwnedSlice();
+    }
+
+    pub fn inspectValue(self: *DebugInfo, value: Value) ![]const u8 {
+        return switch (value) {
+            .number => |n| try std.fmt.allocPrint(self.allocator, "Number({d})", .{n}),
+            .string => |s| try std.fmt.allocPrint(self.allocator, "String(\"{s}\")", .{s}),
+            .boolean => |b| try std.fmt.allocPrint(self.allocator, "Boolean({s})", .{if (b) "true" else "false"}),
+            .null => try self.allocator.dupe(u8, "Null"),
+            .array => |arr| try self.inspectArray(arr),
+            .function => |func| try self.inspectFunction(func),
+            .error_value => |err| try std.fmt.allocPrint(self.allocator, "Error({s})", .{err.message}),
+            else => try self.allocator.dupe(u8, "Unknown"),
+        };
+    }
+
+    fn inspectArray(self: *DebugInfo, array: std.ArrayList(Value)) ![]const u8 {
+        var result = std.ArrayList(u8).init(self.allocator);
+        defer result.deinit();
+
+        try result.appendSlice("Array([\n");
+        for (array.items) |item| {
+            const item_str = try self.inspectValue(item);
+            defer self.allocator.free(item_str);
+            try result.writer().print("  {s},\n", .{item_str});
+        }
+        try result.appendSlice("])");
+
+        return try result.toOwnedSlice();
+    }
+
+    fn inspectFunction(self: *DebugInfo, func: Function) ![]const u8 {
+        return try std.fmt.allocPrint(
+            self.allocator,
+            "Function({s}, {s}, params: {d})",
+            .{
+                func.name.lexeme,
+                @tagName(func.behavior),
+                func.params.items.len,
+            },
+        );
+    }
+};
+
 pub fn init(allocator: std.mem.Allocator) !Interpreter {
     const global_env = try allocator.create(Environment);
     global_env.* = Environment.init(std.heap.page_allocator, null);
