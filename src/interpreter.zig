@@ -807,6 +807,16 @@ pub const Interpreter = struct {
         const iterator = try Iterator.init(self.allocator, value);
         return Value{ .iterator = iterator };
     }
+
+    pub const ErrorLevel = enum {
+        Warning,
+        Error,
+        Fatal,
+    };
+
+    fn reportError(self: *Interpreter, level: ErrorLevel, err: RuntimeError, msg: []const u8) !void {
+        // Handle errors based on their severity level
+    }
 };
 
 pub const IteratorType = enum {
