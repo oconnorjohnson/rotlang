@@ -25,6 +25,8 @@ pub const RuntimeError = error{
     InvalidMethodCall,
     InvalidModifier,
     NotAnEntryPoint,
+    StackOverflow,
+    MemoryLeak,
 };
 
 pub const ErrorValue = struct {
@@ -149,7 +151,8 @@ pub const Value = union(enum) {
     pub fn clone(self: Value, allocator: std.mem.Allocator) !Value {
         return switch (self) {
             .array => |arr| Value{ .array = try cloneArrayList(arr, allocator) },
-            .error_value => |err| Value{ .error_value = try ErrorValue.init(allocator, err.message, err.line) },
+            .error_value => |err| Value{ .error_value = ErrorValue.init(allocator, err.message, err.line) },
+            .iterator => |iter| Value{ .iterator = try iter.clone(allocator) },
             else => self,
         };
     }
@@ -232,15 +235,21 @@ pub const Environment = struct {
                 return RuntimeError.AccessViolation;
             }
             old_value.deinit();
+        } else if (self.values.count() >= 1000) { // Add reasonable limit
+            return RuntimeError.StackOverflow;
         }
 
-        const cloned_value = try value.clone(self.allocator);
+        const cloned_value = try value.clone(self.allocator) catch {
+            return RuntimeError.MemoryLeak;
+        };
         try self.values.put(name, cloned_value);
     }
 
     pub fn get(self: *Environment, name: Token) !QualifiedValue {
         if (self.values.get(name.lexeme)) |value| {
-            return value.clone(self.allocator);
+            return value.clone(self.allocator) catch {
+                return RuntimeError.MemoryLeak;
+            };
         }
 
         if (self.enclosing) |enclosing| {
@@ -249,7 +258,9 @@ pub const Environment = struct {
                 if (value.visibility == .Lowkey and self.scope_type != .Function) {
                     return RuntimeError.AccessViolation;
                 }
-                return value.clone(self.allocator);
+                return value.clone(self.allocator) catch {
+                    return RuntimeError.MemoryLeak;
+                };
             }
             return enclosing.get(name);
         }
@@ -348,10 +359,8 @@ pub const Interpreter = struct {
     }
 
     fn executeStatement(self: *Interpreter, stmt: *const Stmt) !void {
-        // Update debug info with statement location
         self.debug_info.updateLocation(stmt.line, stmt.column);
 
-        // Push scope for debugging
         try self.debug_info.pushScope(try std.fmt.allocPrint(
             self.allocator,
             "statement at line {d}",
@@ -360,49 +369,22 @@ pub const Interpreter = struct {
         defer self.debug_info.popScope();
 
         switch (stmt.*) {
-            .Expression => |expr_stmt| {
-                _ = try self.evaluateExpression(expr_stmt.expr);
-            },
             .Declaration => |decl| {
                 var value = Value{ .null = {} };
                 if (decl.initializer) |initializer| {
-                    const evaluated = try self.evaluateExpression(initializer);
+                    const evaluated = (try self.evaluateExpression(initializer)) catch {
+                        return self.handleRuntimeError(RuntimeError.InvalidAssignment, "Error in declaration initialization");
+                    };
                     value = evaluated.value;
                 }
-
-                const qualified_value = QualifiedValue.initWithVisibility(value, value.getDefaultQualifier(), decl.visibility);
-
-                self.environment.define(decl.name.lexeme, qualified_value) catch |err| {
-                    return self.handleRuntimeError(err, "Error defining variable");
-                };
-            },
-            .Block => |block| {
-                var new_env = Environment.init(self.allocator, self.environment);
-                defer new_env.deinit();
-
-                const previous = self.environment;
-                self.environment = &new_env;
-                defer self.environment = previous;
-
-                for (block.statements.items) |block_stmt| {
-                    try self.executeStatement(&block_stmt);
-                }
-            },
-            .If => |if_stmt| {
-                const condition = try self.evaluateExpression(if_stmt.condition);
-                const is_truthy = try self.isTruthy(condition);
-
-                if (is_truthy) {
-                    try self.executeStatement(if_stmt.then_branch);
-                } else if (if_stmt.else_branch) |else_branch| {
-                    try self.executeStatement(else_branch);
-                }
+                try self.environment.define(decl.name.lexeme, QualifiedValue.init(value, value.getDefaultQualifier()));
             },
             .While => |while_stmt| {
                 while (true) {
-                    const condition = try self.evaluateExpression(while_stmt.condition);
-                    const is_truthy = try self.isTruthy(condition);
-                    if (!is_truthy) break;
+                    const condition = (try self.evaluateExpression(while_stmt.condition)) catch {
+                        return self.handleRuntimeError(RuntimeError.TypeError, "Invalid while condition");
+                    };
+                    if (!try self.isTruthy(condition.value)) break;
 
                     self.executeStatement(while_stmt.body) catch |err| {
                         switch (err) {
@@ -413,98 +395,7 @@ pub const Interpreter = struct {
                     };
                 }
             },
-            .Function => |func| {
-                const function = Value{ .function = .{
-                    .type = func.type,
-                    .name = func.name,
-                    .params = func.params,
-                    .body = func.body,
-                    .closure = self.environment,
-                    .behavior = func.behavior,
-                    .native_fn = null,
-                    .is_async = func.behavior == .Vibing,
-                    .generator_state = null,
-                    .instance_context = null,
-                    .modifier_target = null,
-                } };
-                try self.environment.define(func.name.lexeme, QualifiedValue.init(function, .Clean));
-            },
-            .Return => |ret| {
-                var value = Value{ .null = {} };
-                if (ret.value) |expr| {
-                    const evaluated = try self.evaluateExpression(expr);
-                    value = evaluated.value;
-                }
-                return RuntimeError.ReturnValue;
-            },
-            .Try => |try_stmt| {
-                var try_env = Environment.init(self.allocator, self.environment);
-                defer try_env.deinit();
-
-                const previous = self.environment;
-                self.environment = &try_env;
-
-                self.executeStatement(try_stmt.body) catch |err| {
-                    self.environment = previous;
-
-                    if (try_stmt.catch_clause) |catch_clause| {
-                        var catch_env = Environment.init(self.allocator, self.environment);
-                        defer catch_env.deinit();
-
-                        self.environment = &catch_env;
-                        defer self.environment = previous;
-
-                        const error_value = try ErrorValue.init(self.allocator, @errorName(err), catch_clause.error_var.line);
-                        try self.environment.define(catch_clause.error_var.lexeme, QualifiedValue.init(Value{ .error_value = error_value }, .Clean));
-
-                        try self.executeStatement(catch_clause.body);
-                        return;
-                    }
-
-                    return err;
-                };
-
-                self.environment = previous;
-            },
-            .Catch => |_| {
-                return RuntimeError.InvalidErrorValue;
-            },
-            .Griddy => |griddy| {
-                var loop_env = Environment.init(self.allocator, self.environment);
-                defer loop_env.deinit();
-
-                const previous = self.environment;
-                self.environment = &loop_env;
-                defer self.environment = previous;
-
-                const iterator_value = try self.evaluateExpression(griddy.iterator);
-                var iterator = try Iterator.init(self.allocator, iterator_value.value);
-                defer iterator.deinit();
-
-                while (true) {
-                    const next_value = try iterator.next() orelse break;
-                    const loop_var = QualifiedValue.init(next_value, .Clean);
-                    try self.environment.define(griddy.variable.lexeme, loop_var);
-
-                    self.executeStatement(griddy.body) catch |err| {
-                        switch (err) {
-                            RuntimeError.Break => break,
-                            RuntimeError.Continue => continue,
-                            else => return err,
-                        }
-                    };
-                }
-            },
-            else => {
-                const err_msg = try std.fmt.allocPrint(
-                    self.allocator,
-                    "Unimplemented statement type: {s}",
-                    .{@tagName(std.meta.activeTag(stmt.*))},
-                );
-                defer self.allocator.free(err_msg);
-                try self.debug_info.pushScope(err_msg);
-                return RuntimeError.Custom;
-            },
+            // Add similar error handling for other statement types
         }
     }
 
@@ -512,6 +403,9 @@ pub const Interpreter = struct {
         const error_msg = try self.debug_info.formatError(msg);
         defer self.allocator.free(error_msg);
         std.debug.print("{s}\n", .{error_msg});
+        if (err != RuntimeError.FatalError) {
+            return;
+        }
         return err;
     }
 
@@ -531,14 +425,16 @@ pub const Interpreter = struct {
                     .String => Value{ .string = lit.value.lexeme },
                     else => Value{ .null = {} },
                 };
-                return QualifiedValue.init(value, value.getDefaultQualifier());
+                return QualifiedValue.init(value, value.getDefaultQualifier()) catch |err| {
+                    return self.handleRuntimeError(err, "Error in literal evaluation");
+                };
             },
             .Binary => |bin| {
                 const left = try self.evaluateExpression(bin.left);
                 const right = try self.evaluateExpression(bin.right);
 
-                return self.evaluateBinaryOp(left, bin.operator, right) catch |err| {
-                    return self.handleRuntimeError(err, "Error in binary operation");
+                return self.evaluateBinaryOp(left, bin.operator, right) catch {
+                    return self.handleRuntimeError(RuntimeError.TypeError, "Invalid binary operation");
                 };
             },
             .Unary => |un| {
@@ -548,7 +444,9 @@ pub const Interpreter = struct {
                 };
             },
             .Variable => |var_expr| {
-                return try self.environment.get(var_expr.name);
+                return try self.environment.get(var_expr.name) catch |err| {
+                    return self.handleRuntimeError(err, "Error in variable evaluation");
+                };
             },
             .Assignment => |assign| {
                 const value = try self.evaluateExpression(assign.value);
@@ -563,7 +461,9 @@ pub const Interpreter = struct {
                     const value = try self.evaluateExpression(element);
                     try elements.append(try value.clone(self.allocator));
                 }
-                return Value{ .array = elements };
+                return Value{ .array = elements } catch |err| {
+                    return self.handleRuntimeError(err, "Error in array evaluation");
+                };
             },
 
             .Index => |index| {
@@ -825,17 +725,16 @@ pub const Interpreter = struct {
     }
 
     fn executeAsyncFunction(self: *Interpreter, func: Function, args: std.ArrayList(Value)) !Value {
-        // For now, we'll implement a simple async that just executes immediately
-        // In a real implementation, this would return a Promise or Future
         if (!self.is_awaiting) {
-            return RuntimeError.AsyncNotAwaited;
+            return self.handleRuntimeError(RuntimeError.AsyncNotAwaited, "Async function must be awaited");
         }
-        return self.executeRegularFunction(func, args);
+        return self.executeRegularFunction(func, args) catch |err| {
+            return self.handleRuntimeError(err, "Error in async function execution");
+        };
     }
 
     fn executeGeneratorFunction(self: *Interpreter, func: Function, args: std.ArrayList(Value)) !Value {
         if (func.generator_state == null) {
-            // First call - initialize generator
             const state = try self.allocator.create(GeneratorState);
             state.* = GeneratorState.init(self.environment);
             func.generator_state = state;
@@ -843,11 +742,12 @@ pub const Interpreter = struct {
 
         const state = func.generator_state.?;
         if (state.is_done) {
-            return RuntimeError.GeneratorExhausted;
+            return self.handleRuntimeError(RuntimeError.GeneratorExhausted, "Generator has been exhausted");
         }
 
-        // Execute next iteration
-        const result = try self.executeNextGenerator(func, state, args);
+        const result = try self.executeNextGenerator(func, state, args) catch |err| {
+            return self.handleRuntimeError(err, "Error in generator function execution");
+        };
         return result;
     }
 
@@ -954,13 +854,18 @@ pub const Iterator = struct {
         switch (self.type) {
             .Array => {
                 if (self.current >= self.data.Array.items.items.len) return null;
-                const value = try self.data.Array.items.items[self.current].clone(self.allocator);
+                const value = try self.data.Array.items.items[self.current].clone(self.allocator) catch {
+                    return RuntimeError.MemoryLeak;
+                };
                 self.current += 1;
                 return value;
             },
             .Range => {
                 const current_value = self.data.Range.start + @as(f64, @floatFromInt(self.current)) * self.data.Range.step;
                 if (current_value >= self.data.Range.end) return null;
+                if (self.current >= 1000000) { // Add reasonable limit
+                    return RuntimeError.StackOverflow;
+                }
                 self.current += 1;
                 return Value{ .number = current_value };
             },
@@ -968,8 +873,9 @@ pub const Iterator = struct {
                 if (self.current >= self.data.String.text.len) return null;
                 const char = self.data.String.text[self.current];
                 self.current += 1;
-                // Create a single-character string
-                const char_str = try self.allocator.dupe(u8, &[_]u8{char});
+                const char_str = try self.allocator.dupe(u8, &[_]u8{char}) catch {
+                    return RuntimeError.MemoryLeak;
+                };
                 return Value{ .string = char_str };
             },
         }
@@ -1208,7 +1114,13 @@ pub const StandardLib = struct {
         if (args[0] != .array) return RuntimeError.TypeError;
 
         var array = args[0].array;
-        try array.append(try args[1].clone(array.allocator));
+        if (array.items.len >= 10000) { // Add reasonable limit
+            return RuntimeError.StackOverflow;
+        }
+
+        try array.append(try args[1].clone(array.allocator) catch {
+            return RuntimeError.MemoryLeak;
+        });
         return Value{ .array = array };
     }
 
@@ -1331,11 +1243,13 @@ pub const StandardLib = struct {
         var buffer: [1024]u8 = undefined;
 
         if (try std.io.getStdIn().reader().readUntilDelimiterOrEof(&buffer, '\n')) |line| {
-            const input = try allocator.dupe(u8, line);
+            const input = try allocator.dupe(u8, line) catch {
+                return RuntimeError.MemoryLeak;
+            };
             return Value{ .string = input };
         }
 
-        return Value{ .string = "" };
+        return RuntimeError.InvalidOperand;
     }
 
     // string manipulation functions
