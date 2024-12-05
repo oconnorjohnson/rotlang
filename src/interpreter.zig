@@ -1449,7 +1449,25 @@ pub const StandardLib = struct {
         return RuntimeError.InvalidOperand;
     }
 
-    // string manipulation functions
+    // String Manipulation
+    fn capSplit(args: []Value) !Value {
+        if (args.len < 2) return RuntimeError.InvalidOperand;
+        if (args[0] != .string or args[1] != .string) return RuntimeError.TypeError;
+
+        const str = args[0].string;
+        const delimiter = args[1].string;
+        const allocator = std.heap.page_allocator;
+
+        var result = std.ArrayList(Value).init(allocator);
+        var iter = std.mem.split(u8, str, delimiter);
+
+        while (iter.next()) |part| {
+            const part_copy = try allocator.dupe(u8, part);
+            try result.append(Value{ .string = part_copy });
+        }
+
+        return Value{ .array = result };
+    }
     fn capUpperCase(args: []Value) !Value {
         if (args.len < 1) return RuntimeError.InvalidOperand;
         if (args[0] != .string) return RuntimeError.TypeError;
