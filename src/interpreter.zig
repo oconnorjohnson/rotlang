@@ -1468,6 +1468,30 @@ pub const StandardLib = struct {
 
         return Value{ .array = result };
     }
+
+    fn noCapJoin(args: []Value) !Value {
+        if (args.len < 2) return RuntimeError.InvalidOperand;
+        if (args[0] != .array or args[1] != .string) return RuntimeError.TypeError;
+
+        const array = args[0].array;
+        const separator = args[1].string;
+        const allocator = std.heap.page_allocator;
+
+        var result = std.ArrayList(u8).init(allocator);
+        for (array.items, 0..) |item, i| {
+            if (i > 0) {
+                try result.appendSlice(separator);
+            }
+            const str = switch (item) {
+                .string => |s| s,
+                else => return RuntimeError.TypeError,
+            };
+            try result.appendSlice(str);
+        }
+
+        return Value{ .string = try result.toOwnedSlice() };
+    }
+
     fn capUpperCase(args: []Value) !Value {
         if (args.len < 1) return RuntimeError.InvalidOperand;
         if (args[0] != .string) return RuntimeError.TypeError;
