@@ -1351,6 +1351,9 @@ pub const DebugInfo = struct {
     }
 
     pub fn formatError(self: *DebugInfo, error_msg: []const u8) ![]const u8 {
+        const stack_trace = try self.generateStackTrace();
+        defer self.allocator.free(stack_trace);
+
         return try std.fmt.allocPrint(
             self.allocator,
             \\Error: {s}
@@ -1365,8 +1368,11 @@ pub const DebugInfo = struct {
                 self.file_name,
                 self.line_number,
                 self.column,
-                if (self.scope_stack.items.len > 0) self.scope_stack.items[self.scope_stack.items.len - 1] else "global scope",
-                try self.generateStackTrace(),
+                if (self.scope_stack.items.len > 0)
+                    self.scope_stack.items[self.scope_stack.items.len - 1]
+                else
+                    "global scope",
+                stack_trace,
             },
         );
     }
