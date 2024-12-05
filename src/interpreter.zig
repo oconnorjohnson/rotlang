@@ -1223,6 +1223,24 @@ pub const StandardLib = struct {
         return Value{ .array = result };
     }
 
+    fn skibidiReduce(args: []Value) !Value {
+        if (args.len < 3) return RuntimeError.InvalidOperand;
+        if (args[0] != .array or args[1] != .function) return RuntimeError.TypeError;
+
+        const array = args[0].array;
+        const reducer = args[1].function;
+        var accumulator = try args[2].clone(array.allocator);
+
+        for (array.items) |item| {
+            var reduce_args = std.ArrayList(Value).init(array.allocator);
+            try reduce_args.append(accumulator);
+            try reduce_args.append(try item.clone(array.allocator));
+            accumulator = try callFunction(reducer, reduce_args);
+        }
+
+        return accumulator;
+    }
+
     fn createNativeFunction(
         allocator: std.mem.Allocator,
         name: []const u8,
