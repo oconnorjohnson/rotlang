@@ -1205,6 +1205,24 @@ pub const StandardLib = struct {
         }
     }
 
+    fn rizzMap(args: []Value) !Value {
+        if (args.len < 2) return RuntimeError.InvalidOperand;
+        if (args[0] != .array or args[1] != .function) return RuntimeError.TypeError;
+
+        const array = args[0].array;
+        const mapper = args[1].function;
+        var result = std.ArrayList(Value).init(array.allocator);
+
+        for (array.items) |item| {
+            var map_args = std.ArrayList(Value).init(array.allocator);
+            try map_args.append(try item.clone(array.allocator));
+            const mapped = try callFunction(mapper, map_args);
+            try result.append(mapped);
+        }
+
+        return Value{ .array = result };
+    }
+
     fn createNativeFunction(
         allocator: std.mem.Allocator,
         name: []const u8,
