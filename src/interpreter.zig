@@ -1094,17 +1094,20 @@ pub const StandardLib = struct {
         );
     }
 
-    fn yeetPrint(args: []Value) Value {
+    fn yeetPrint(args: []Value) !Value {
         for (args) |arg| {
-            std.debug.print("{}", .{arg});
+            std.debug.print("{}", .{arg}) catch {
+                return RuntimeError.Custom;
+            };
         }
-        std.debug.print("\n", .{});
         return Value{ .null = {} };
     }
 
-    fn sheeshPrint(args: []Value) Value {
+    fn sheeshPrint(args: []Value) !Value {
         for (args) |arg| {
-            std.debug.print("{}", .{arg});
+            std.debug.print("{}", .{arg}) catch {
+                return RuntimeError.Custom;
+            };
         }
         return Value{ .null = {} };
     }
@@ -1114,13 +1117,16 @@ pub const StandardLib = struct {
         if (args[0] != .array) return RuntimeError.TypeError;
 
         var array = args[0].array;
-        if (array.items.len >= 10000) { // Add reasonable limit
+        if (array.items.len >= 10000) {
             return RuntimeError.StackOverflow;
         }
 
-        try array.append(try args[1].clone(array.allocator) catch {
+        const cloned = args[1].clone(array.allocator) catch {
             return RuntimeError.MemoryLeak;
-        });
+        };
+        array.append(cloned) catch {
+            return RuntimeError.MemoryLeak;
+        };
         return Value{ .array = array };
     }
 
