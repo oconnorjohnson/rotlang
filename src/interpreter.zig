@@ -1150,10 +1150,11 @@ pub const StandardLib = struct {
         try env.define("clutch", try createNativeFunction(allocator, "clutch", clutchInput));
 
         // Array utilities
-        try env.define("bussin", try createNativeFunction(allocator, "bussin", bussinPush));
-        try env.define("bruh", try createNativeFunction(allocator, "bruh", bruhPop));
-        try env.define("rizzler", try createNativeFunction(allocator, "rizzler", rizzlerLength));
-        try env.define("gyat", try createNativeFunction(allocator, "gyat", gyatSort));
+        try env.define("bussin_sort", try createNativeFunction(allocator, "bussin_sort", bussinSort));
+        try env.define("gyat_filter", try createNativeFunction(allocator, "gyat_filter", gyatFilter));
+        try env.define("rizz_map", try createNativeFunction(allocator, "rizz_map", rizzMap));
+        try env.define("skibidi_reduce", try createNativeFunction(allocator, "skibidi_reduce", skibidiReduce));
+        try env.define("fanum_slice", try createNativeFunction(allocator, "fanum_slice", fanumSlice));
 
         // Type conversion
         try env.define("skibidi", try createNativeFunction(allocator, "skibidi", skibidiStr));
@@ -1171,6 +1172,9 @@ pub const StandardLib = struct {
         try env.define("slay", try createNativeFunction(allocator, "slay", slayTrim));
         try env.define("periodt", try createNativeFunction(allocator, "periodt", periodtSplit));
         try env.define("snatch", try createNativeFunction(allocator, "snatch", snatchSubstring));
+        try env.define("cap_split", try createNativeFunction(allocator, "cap_split", capSplit));
+        try env.define("nocap_join", try createNativeFunction(allocator, "nocap_join", noCapJoin));
+        try env.define("slay_format", try createNativeFunction(allocator, "slay_format", slayFormat));
     }
 
     // array operations
