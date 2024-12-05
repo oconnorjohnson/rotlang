@@ -842,53 +842,58 @@ pub const Interpreter = struct {
         // Handle error based on severity
         switch (level) {
             .Warning => {
-                // Log warning but continue execution
                 if (self.debug_info.warnings_as_errors) {
                     return err;
                 }
             },
             .Error => {
-                // For regular errors, attempt recovery if enabled
-                if (self.recovery_enabled) {
-                    try self.resetToSafeState();
-                } else {
-                    return err;
-                }
+                try self.resetToSafeState();
+                return err;
             },
             .Fatal => {
-                // Fatal errors always halt execution
                 try self.cleanup();
                 return err;
             },
         }
     }
-    fn resetToSafeState(self: *Interpreter) !void {
-        // Clear any temporary resources
-        self.debug_info.clearTemporaryData();
 
-        // Reset to global scope
-        while (self.environment.enclosing != null) {
-            const parent = self.environment.enclosing.?;
-            self.environment.deinit();
-            self.environment = parent;
+    pub fn resetToSafeState(self: *Interpreter) !void {
+        // Clear temporary debug data while keeping essential information
+        while (self.debug_info.scope_stack.items.len > 1) {
+            const scope = self.debug_info.scope_stack.pop();
+            self.allocator.free(scope);
         }
 
-        // Clear any pending operations
+        // Reset location to global scope
+        self.debug_info.line_number = 0;
+        self.debug_info.column = 0;
+
+        // Add recovery marker to stack
         try self.debug_info.pushScope("error recovery");
     }
 
-    // Helper function for cleanup before fatal errors
-    fn cleanup(self: *Interpreter) !void {
-        // Ensure all resources are properly freed
-        var iter = self.environment.values.iterator();
-        while (iter.next()) |entry| {
-            var value = entry.value_ptr;
-            value.deinit();
+    pub fn cleanup(self: *Interpreter) !void {
+        // Log cleanup operation
+        try self.debug_info.pushScope("fatal error cleanup");
+        defer self.debug_info.popScope();
+
+        // Clear all scopes
+        while (self.debug_info.scope_stack.items.len > 0) {
+            const scope = self.debug_info.scope_stack.pop();
+            self.allocator.free(scope);
         }
 
-        // Log cleanup in debug info
-        try self.debug_info.pushScope("fatal error cleanup");
-        self.debug_info.popScope();
+        // Reset debug info to initial state
+        self.debug_info.line_number = 0;
+        self.debug_info.column = 0;
+    }
+
+    pub fn clearTemporaryData(self: *Interpreter) void {
+        // Clear any temporary debug data while keeping essential information
+        while (self.debug_info.scope_stack.items.len > 1) {
+            const scope = self.debug_info.scope_stack.pop();
+            self.allocator.free(scope);
+        }
     }
 };
 
@@ -1411,6 +1416,13 @@ pub const DebugInfo = struct {
     file_name: []const u8,
     scope_stack: std.ArrayList([]const u8),
     allocator: std.mem.Allocator,
+    warnings_as_errors: bool = false,
+
+    pub const ErrorLevel = enum {
+        Warning,
+        Error,
+        Fatal,
+    };
 
     pub fn init(allocator: std.mem.Allocator, file_name: []const u8) !*DebugInfo {
         const debug_info = try allocator.create(DebugInfo);
@@ -1524,6 +1536,88 @@ pub const DebugInfo = struct {
                 func.params.items.len,
             },
         );
+    }
+
+    pub fn reportError(self: *DebugInfo, level: ErrorLevel, err: RuntimeError, msg: []const u8) !void {
+        // Create error context
+        const error_context = try self.formatError(msg);
+        defer self.allocator.free(error_context);
+
+        // Format the error level prefix
+        const level_prefix = switch (level) {
+            .Warning => "\x1b[33mWarning\x1b[0m", // Yellow
+            .Error => "\x1b[31mError\x1b[0m", // Red
+            .Fatal => "\x1b[1;31mFatal Error\x1b[0m", // Bold Red
+        };
+
+        // Log the error with appropriate formatting
+        std.debug.print(
+            \\{s}: {s}
+            \\Error Type: {s}
+            \\{s}
+            \\
+        , .{
+            level_prefix,
+            msg,
+            @tagName(err),
+            error_context,
+        });
+
+        // Handle error based on severity
+        switch (level) {
+            .Warning => {
+                if (self.warnings_as_errors) {
+                    return err;
+                }
+            },
+            .Error => {
+                try self.resetToSafeState();
+                return err;
+            },
+            .Fatal => {
+                try self.cleanup();
+                return err;
+            },
+        }
+    }
+
+    pub fn resetToSafeState(self: *DebugInfo) !void {
+        // Clear temporary debug data while keeping essential information
+        while (self.scope_stack.items.len > 1) {
+            const scope = self.scope_stack.pop();
+            self.allocator.free(scope);
+        }
+
+        // Reset location to global scope
+        self.line_number = 0;
+        self.column = 0;
+
+        // Add recovery marker to stack
+        try self.pushScope("error recovery");
+    }
+
+    pub fn cleanup(self: *DebugInfo) !void {
+        // Log cleanup operation
+        try self.pushScope("fatal error cleanup");
+        defer self.popScope();
+
+        // Clear all scopes
+        while (self.scope_stack.items.len > 0) {
+            const scope = self.scope_stack.pop();
+            self.allocator.free(scope);
+        }
+
+        // Reset debug info to initial state
+        self.line_number = 0;
+        self.column = 0;
+    }
+
+    pub fn clearTemporaryData(self: *DebugInfo) void {
+        // Clear any temporary debug data while keeping essential information
+        while (self.scope_stack.items.len > 1) {
+            const scope = self.scope_stack.pop();
+            self.allocator.free(scope);
+        }
     }
 };
 
