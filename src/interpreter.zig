@@ -1241,6 +1241,29 @@ pub const StandardLib = struct {
         return accumulator;
     }
 
+    fn fanumSlice(args: []Value) !Value {
+        if (args.len < 3) return RuntimeError.InvalidOperand;
+        if (args[0] != .array or args[1] != .number or args[2] != .number) {
+            return RuntimeError.TypeError;
+        }
+
+        const array = args[0].array;
+        const start = @as(usize, @intFromFloat(args[1].number));
+        const end = @as(usize, @intFromFloat(args[2].number));
+
+        if (start > end or end > array.items.len) {
+            return RuntimeError.IndexOutOfBounds;
+        }
+
+        var result = std.ArrayList(Value).init(array.allocator);
+        var i: usize = start;
+        while (i < end) : (i += 1) {
+            try result.append(try array.items[i].clone(array.allocator));
+        }
+
+        return Value{ .array = result };
+    }
+
     fn createNativeFunction(
         allocator: std.mem.Allocator,
         name: []const u8,
