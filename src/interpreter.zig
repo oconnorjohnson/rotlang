@@ -1492,6 +1492,33 @@ pub const StandardLib = struct {
         return Value{ .string = try result.toOwnedSlice() };
     }
 
+    fn slayFormat(args: []Value) !Value {
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+        if (args[0] != .string) return RuntimeError.TypeError;
+
+        const format_str = args[0].string;
+        const format_args = args[1..];
+        const allocator = std.heap.page_allocator;
+
+        var result = std.ArrayList(u8).init(allocator);
+        var arg_index: usize = 0;
+
+        var i: usize = 0;
+        while (i < format_str.len) {
+            if (format_str[i] == '{' and i + 1 < format_str.len and format_str[i + 1] == '}') {
+                if (arg_index >= format_args.len) return RuntimeError.InvalidOperand;
+                try formatValue(format_args[arg_index], &result);
+                arg_index += 1;
+                i += 2;
+            } else {
+                try result.append(format_str[i]);
+                i += 1;
+            }
+        }
+
+        return Value{ .string = try result.toOwnedSlice() };
+    }
+
     fn capUpperCase(args: []Value) !Value {
         if (args.len < 1) return RuntimeError.InvalidOperand;
         if (args[0] != .string) return RuntimeError.TypeError;
