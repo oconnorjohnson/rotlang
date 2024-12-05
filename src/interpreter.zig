@@ -815,7 +815,80 @@ pub const Interpreter = struct {
     };
 
     fn reportError(self: *Interpreter, level: ErrorLevel, err: RuntimeError, msg: []const u8) !void {
-        // Handle errors based on their severity level
+        // Create error context
+        const error_context = try self.debug_info.formatError(msg);
+        defer self.allocator.free(error_context);
+
+        // Format the error level prefix
+        const level_prefix = switch (level) {
+            .Warning => "\x1b[33mWarning\x1b[0m", // Yellow
+            .Error => "\x1b[31mError\x1b[0m", // Red
+            .Fatal => "\x1b[1;31mFatal Error\x1b[0m", // Bold Red
+        };
+
+        // Log the error with appropriate formatting
+        std.debug.print(
+            \\{s}: {s}
+            \\Error Type: {s}
+            \\{s}
+            \\
+        , .{
+            level_prefix,
+            msg,
+            @tagName(err),
+            error_context,
+        });
+
+        // Handle error based on severity
+        switch (level) {
+            .Warning => {
+                // Log warning but continue execution
+                if (self.debug_info.warnings_as_errors) {
+                    return err;
+                }
+            },
+            .Error => {
+                // For regular errors, attempt recovery if enabled
+                if (self.recovery_enabled) {
+                    try self.resetToSafeState();
+                } else {
+                    return err;
+                }
+            },
+            .Fatal => {
+                // Fatal errors always halt execution
+                try self.cleanup();
+                return err;
+            },
+        }
+    }
+    fn resetToSafeState(self: *Interpreter) !void {
+        // Clear any temporary resources
+        self.debug_info.clearTemporaryData();
+
+        // Reset to global scope
+        while (self.environment.enclosing != null) {
+            const parent = self.environment.enclosing.?;
+            self.environment.deinit();
+            self.environment = parent;
+        }
+
+        // Clear any pending operations
+        try self.debug_info.pushScope("error recovery");
+    }
+
+    // Helper function for cleanup before fatal errors
+    fn cleanup(self: *Interpreter) !void {
+        // Ensure all resources are properly freed
+        var iter = self.environment.values.iterator();
+        while (iter.next()) |entry| {
+            var value = entry.value_ptr;
+            value.deinit();
+        }
+
+        // Log cleanup in debug info
+        try self.debug_info.pushScope("fatal error cleanup");
+        self.debug_info.popScope();
     }
 };
 
@@ -1332,7 +1405,6 @@ pub const StandardLib = struct {
         return Value{ .string = result };
     }
 };
-
 pub const DebugInfo = struct {
     line_number: usize,
     column: usize,
