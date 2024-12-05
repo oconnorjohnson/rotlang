@@ -402,11 +402,23 @@ pub const Interpreter = struct {
     fn handleRuntimeError(self: *Interpreter, err: RuntimeError, msg: []const u8) !void {
         const error_msg = try self.debug_info.formatError(msg);
         defer self.allocator.free(error_msg);
+
+        // Log the error
         std.debug.print("{s}\n", .{error_msg});
-        if (err != RuntimeError.FatalError) {
-            return;
+
+        // Determine if error is fatal
+        switch (err) {
+            RuntimeError.StackOverflow, RuntimeError.MemoryLeak, RuntimeError.FatalError => return err,
+            else => {
+                // For non-fatal errors, log and continue
+                if (self.recovery_enabled) {
+                    // Reset to safe state
+                    try self.resetToSafeState();
+                    return;
+                }
+                return err;
+            },
         }
-        return err;
     }
 
     fn evaluateExpression(self: *Interpreter, expr: *const Expr) !QualifiedValue {
