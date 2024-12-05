@@ -1627,10 +1627,71 @@ pub const ErrorContext = struct {
     column: usize,
     scope: []const u8,
     value_context: ?Value,
+    allocator: std.mem.Allocator,
 
     pub fn format(self: ErrorContext) ![]const u8 {
-        // Format error context information
+        var result = std.ArrayList(u8).init(self.allocator);
+        defer result.deinit();
 
+        // Write the main error message
+        try result.writer().print("Error: {s}\n", .{self.message});
+
+        // Write location information
+        try result.writer().print("  at line {d}, column {d}\n", .{ self.line, self.column });
+
+        // Write scope information
+        try result.writer().print("  in scope: {s}\n", .{self.scope});
+
+        // Add value context if available
+        if (self.value_context) |value| {
+            try result.writer().print("\nValue context:\n", .{});
+            switch (value) {
+                .number => |n| try result.writer().print("  Number: {d}\n", .{n}),
+                .string => |s| try result.writer().print("  String: \"{s}\"\n", .{s}),
+                .boolean => |b| try result.writer().print("  Boolean: {}\n", .{b}),
+                .array => |arr| {
+                    try result.writer().print("  Array with {d} elements\n", .{arr.items.len});
+                    if (arr.items.len > 0) {
+                        try result.writer().print("  First element: ", .{});
+                        try arr.items[0].format("", .{}, result.writer());
+                        try result.writer().print("\n", .{});
+                    }
+                },
+                .function => |func| try result.writer().print("  Function: {s}\n", .{func.name.lexeme}),
+                .error_value => |err| try result.writer().print("  Error: {s}\n", .{err.message}),
+                .iterator => try result.writer().print("  Iterator\n", .{}),
+                .null => try result.writer().print("  null\n", .{}),
+            }
+        }
+
+        // Add separator line
+        try result.writer().print("\n-------------------\n", .{});
+
+        return result.toOwnedSlice();
+    }
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        message: []const u8,
+        line: usize,
+        column: usize,
+        scope: []const u8,
+        value_context: ?Value,
+    ) ErrorContext {
+        return .{
+            .allocator = allocator,
+            .message = message,
+            .line = line,
+            .column = column,
+            .scope = scope,
+            .value_context = value_context,
+        };
+    }
+
+    pub fn deinit(self: *ErrorContext) void {
+        if (self.value_context) |*value| {
+            value.deinit();
+        }
     }
 };
 
