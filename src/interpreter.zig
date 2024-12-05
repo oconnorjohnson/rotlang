@@ -1173,6 +1173,38 @@ pub const StandardLib = struct {
         try env.define("snatch", try createNativeFunction(allocator, "snatch", snatchSubstring));
     }
 
+    // array operations
+    fn bussinSort(args: []Value) !Value {
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+        if (args[0] != .array) return RuntimeError.TypeError;
+
+        var arra = args[0].array;
+        const comparator = if (args.len > 1 and args[1] == .function) args[1].function else null;
+
+        try sortArray(&array, comparator);
+        return Value{ .array = array };
+    }
+
+    fn gyatFilter(args: []Value) !Value {
+        if (args.len < 2) return RuntimeError.InvalidOperand;
+        if (args[0] != .array or args[1] != .function) return RuntimeError.TypeError;
+
+        const array = args[0].array;
+        const predicate = args[1].function;
+        var result = std.ArrayList(Value).init(array.allocator);
+
+        for (array.items) |item| {
+            var pred_args = std.ArrayList(Value).init(array.allocator);
+            try pred_args.append(try item.clone(array.allocator));
+            const keep = try callFunction(predicate, pred_args);
+            if (try isTruthy(keep)) {
+                try result.append(try item.clone(array.allocator));
+            }
+
+            return Value{ .array = result };
+        }
+    }
+
     fn createNativeFunction(
         allocator: std.mem.Allocator,
         name: []const u8,
