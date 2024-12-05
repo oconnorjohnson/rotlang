@@ -1393,17 +1393,54 @@ pub const StandardLib = struct {
 
     // math utils
     fn peakMax(args: []Value) !Value {
-        if (args.len < 2) return RuntimeError.InvalidOperand;
-        if (args[0] != .number or args[1] != .number) return RuntimeError.TypeError;
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+        if (args[0] != .array) return RuntimeError.TypeError;
 
-        return Value{ .number = @max(args[0].number, args[1].number) };
+        const array = args[0].array;
+        if (array.items.len == 0) return RuntimeError.InvalidOperand;
+
+        var max = array.items[0];
+        for (array.items[1..]) |item| {
+            if (try compareValues(item, max) > 0) {
+                max = item;
+            }
+        }
+
+        return max;
     }
 
     fn midMin(args: []Value) !Value {
-        if (args.len < 2) return RuntimeError.InvalidOperand;
-        if (args[0] != .number or args[1] != .number) return RuntimeError.TypeError;
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+        if (args[0] != .array) return RuntimeError.TypeError;
 
-        return Value{ .number = @min(args[0].number, args[1].number) };
+        const array = args[0].array;
+        if (array.items.len == 0) return RuntimeError.InvalidOperand;
+
+        var min = array.items[0];
+        for (array.items[1..]) |item| {
+            if (try compareValues(item, min) < 0) {
+                min = item;
+            }
+        }
+
+        return min;
+    }
+
+    fn sigmaSum(args: []Value) !Value {
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+        if (args[0] != .array) return RuntimeError.TypeError;
+
+        const array = args[0].array;
+        var sum: f64 = 0;
+
+        for (array.items) |item| {
+            switch (item) {
+                .number => |n| sum += n,
+                else => return RuntimeError.TypeError,
+            }
+        }
+
+        return Value{ .number = sum };
     }
 
     fn cleanAbs(args: []Value) !Value {
