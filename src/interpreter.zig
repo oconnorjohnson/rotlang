@@ -1445,6 +1445,19 @@ pub const DebugInfo = struct {
     }
 };
 
+pub const ErrorContext = struct {
+    message: []const u8,
+    line: usize,
+    column: usize,
+    scope: []const u8,
+    value_context: ?Value,
+
+    pub fn format(self: ErrorContext) ![]const u8 {
+        // Format error context information
+
+    }
+};
+
 pub fn init(allocator: std.mem.Allocator) !Interpreter {
     const global_env = try allocator.create(Environment);
     global_env.* = Environment.init(std.heap.page_allocator, null);
