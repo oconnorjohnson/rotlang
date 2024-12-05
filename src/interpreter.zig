@@ -1188,6 +1188,113 @@ pub const StandardLib = struct {
         try sortArray(&array, comparator);
         return Value{ .array = array };
     }
+    fn callFunction(func: Function, args: std.ArrayList(Value)) !Value {
+        if (func.native_fn) |native| {
+            return native(args.items);
+        } else if (func.body) |body| {
+            var environment = Environment.init(func.allocator, func.closure);
+            defer environment.deinit();
+
+            try bindParameters(&environment, func.params, args);
+
+            const previous = environment;
+            environment = &environment;
+            defer environment = previous;
+
+            const result = try executeBlock(body, &environment);
+            return result;
+        } else {
+            return RuntimeError.InvalidFunction;
+        }
+    }
+
+    fn bindParameters(environment: *Environment, params: std.ArrayList(Token), args: std.ArrayList(Value)) !void {
+        if (params.items.len != args.items.len) {
+            return RuntimeError.InvalidArgCount;
+        }
+
+        for (params.items, args.items) |param, arg| {
+            try environment.define(param.lexeme, QualifiedValue.init(arg, .Clean));
+        }
+    }
+
+    fn executeBlock(stmt: *Stmt, environment: *Environment) !Value {
+        switch (stmt.*) {
+            .Block => |block| {
+                for (block.statements.items) |statement| {
+                    const result = try executeStatement(statement, environment);
+                    if (result != .null) {
+                        return result;
+                    }
+                }
+                return Value{ .null = {} };
+            },
+            else => return RuntimeError.InvalidStatement,
+        }
+    }
+    fn executeStatement(stmt: *Stmt, environment: *Environment) !Value {
+        // Implementation depends on your statement types
+        // This is a basic example
+        switch (stmt.*) {
+            .Return => |ret| {
+                if (ret.value) |value| {
+                    return evaluateExpression(value, environment);
+                }
+                return Value{ .null = {} };
+            },
+            else => {
+                try executeStatementNoReturn(stmt, environment);
+                return Value{ .null = {} };
+            },
+        }
+    }
+
+    fn executeStatementNoReturn(stmt: *Stmt, environment: *Environment) !void {
+        // Implementation of other statement types
+        _ = stmt;
+        _ = environment;
+    }
+
+    fn evaluateExpression(expr: *Expr, environment: *Environment) !Value {
+        // Implementation depends on your expression types
+        // This is a placeholder
+        _ = expr;
+        _ = environment;
+        return Value{ .null = {} };
+    }
+    fn sortArray(array: *std.ArrayList(Value), comparator: ?Function) !void {
+        const Context = struct {
+            comp_fn: ?Function = null,
+            pub fn lessThan(ctx: @This(), a: Value, b: Value) !bool {
+                if (ctx.comp_fn) |func| {
+                    var args = std.ArrayList(Value).init(array.allocator);
+                    try args.append(try a.clone(array.allocator));
+                    try args.append(try b.clone(array.allocator));
+                    const result = try callFunction(func, args);
+                    return switch (result) {
+                        .number => |n| n < 0,
+                        else => RuntimeError.TypeError,
+                    };
+                } else {
+                    // Default comparison
+                    return switch (a) {
+                        .number => |n1| switch (b) {
+                            .number => |n2| n1 < n2,
+                            else => RuntimeError.TypeError,
+                        },
+                        .string => |s1| switch (b) {
+                            .string => |s2| std.mem.lessThan(u8, s1, s2),
+                            else => RuntimeError.TypeError,
+                        },
+                        else => RuntimeError.TypeError,
+                    };
+                }
+            }
+        };
+
+        var context = Context{ .comp_fn = comparator };
+        std.sort.sort(Value, array.items, context, Context.lessThan);
+    }
 
     fn gyatFilter(args: []Value) !Value {
         if (args.len < 2) return RuntimeError.InvalidOperand;
