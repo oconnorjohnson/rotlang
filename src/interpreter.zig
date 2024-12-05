@@ -1443,6 +1443,25 @@ pub const StandardLib = struct {
         return Value{ .number = sum };
     }
 
+    fn alphaAvg(args: []Value) !Value {
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+        if (args[0] != .array) return RuntimeError.TypeError;
+
+        const array = args[0].array;
+        if (array.items.len == 0) return RuntimeError.InvalidOperand;
+
+        const sum = try sigmaSum(&[_]Value{Value{ .array = array }});
+        return Value{ .number = sum.number / @as(f64, @floatFromInt(array.items.len)) };
+    }
+
+    fn basedRound(args: []Value) !Value {
+        if (args.len < 1) return RuntimeError.InvalidOperand;
+        if (args[0] != .number) return RuntimeError.TypeError;
+
+        const num = args[0].number;
+        return Value{ .number = @round(num) };
+    }
+
     fn cleanAbs(args: []Value) !Value {
         if (args.len < 1) return RuntimeError.InvalidOperand;
         if (args[0] != .number) return RuntimeError.TypeError;
